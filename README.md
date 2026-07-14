@@ -4,6 +4,8 @@ CORD-NMR is a Windows desktop application for natural-product NMR workflows.
 The GUI combines carbon and HSQC dereplication, continuous-series and
 single-spectrum clustering, NMR prediction, and atom-level assignment.
 
+Current public release: **CORD-NMR 1.0.0**.
+
 This repository contains the software needed to inspect and reproduce the GUI
 logic. It deliberately does not contain the manuscript, supporting information,
 research datasets, exploratory work, generated results, or user databases.
@@ -52,7 +54,7 @@ public software distribution.
 ```text
 gui.py                         desktop application entry point
 Carbon* / HSQC* / Combine*     dereplication scoring and result views
-recqc_cluster.py               GUI-facing clustering orchestration
+cord_nmr_cluster.py            GUI-facing clustering orchestration
 nmr_trendtrack/                continuous-series clustering implementation
 single_spectrum/               single-spectrum correction and clustering
 services/                      correction, prediction, and assignment services

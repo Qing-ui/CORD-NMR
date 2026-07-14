@@ -276,7 +276,7 @@ def _run_v4_frontend(samples: List[Sample], config: AppConfig) -> Tuple[List[str
     base, gsp = _v4_modules()
     ordered_ids, rows, peaks_original = _rows_from_peaklists(samples)
 
-    # ReCQC 3.0 exposes the V5/V4-front-end tolerances in the GUI.
+    # CORD-NMR exposes the V5/V4-front-end tolerances in the GUI.
     # The original reference file stores them as module globals, so patch them
     # before running alignment/track enumeration.
     region_windows = list(getattr(config.align, "ppm_window_by_region", []) or [])

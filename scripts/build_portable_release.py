@@ -8,7 +8,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-ARCHIVE_PREFIX = "CORD-NMR-v3.0.0"
+RELEASE_VERSION = "1.0.0"
+ARCHIVE_PREFIX = f"CORD-NMR-v{RELEASE_VERSION}"
 SKIP_DIR_NAMES = {
     ".git",
     ".github",
@@ -163,7 +164,7 @@ def main() -> int:
 
         manifest = (
             "CORD-NMR curated Windows portable release\n"
-            "Version: v3.0.0\n"
+            f"Version: v{RELEASE_VERSION}\n"
             f"Files: {counters['files']}\n"
             f"Uncompressed bytes: {counters['bytes']}\n\n"
             "Included: GUI source, runtime launcher, required Python environments, "

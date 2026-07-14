@@ -1,6 +1,6 @@
-"""ReCQC 3.0 clustering helpers.
+"""CORD-NMR clustering helpers.
 
-This module contains the non-GUI backend used by the new ReCQC clustering module.
+This module contains the non-GUI backend used by the CORD-NMR clustering module.
 It intentionally does not import or reuse the standalone legacy GUI.  It only reuses the
 SPTC/PMTC algorithmic backend for 13C clustering and provides an HSQC extension that keeps
 the same logic: cross-sample candidate tracks -> score/set-pack tracks -> PMTC-style
@@ -19,7 +19,7 @@ HSQC clustering files:
     or no-header numeric text: Cppm Hppm intensity [area]
 
 The HSQC input is therefore exactly the 13C clustering peak-list format with one extra
-H-shift column immediately after CPPM, as requested for ReCQC 3.0.
+H-shift column immediately after CPPM, as required by CORD-NMR.
 """
 from __future__ import annotations
 
@@ -415,7 +415,7 @@ def run_c_v5_clustering(
 
     from nmr_trendtrack.contracts import Sample
 
-    with tempfile.TemporaryDirectory(prefix="recqc30_ccluster_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="cord_nmr_ccluster_") as tmp:
         tmpdir = Path(tmp)
         norm_files: List[Path] = []
         for i, path in enumerate(sample_files, 1):
@@ -579,7 +579,7 @@ def _apply_hsqc_intensity_correction(
     if not correction_options or not correction_options.get("enabled"):
         return "correction=off"
 
-    runtime_dir = Path(output_dir) / "hsqc_intensity_correction" if output_dir else Path(tempfile.mkdtemp(prefix="recqc30_hsqc_corr_"))
+    runtime_dir = Path(output_dir) / "hsqc_intensity_correction" if output_dir else Path(tempfile.mkdtemp(prefix="cord_nmr_hsqc_corr_"))
     input_root = runtime_dir / "hsqc_correction_inputs"
     input_root.mkdir(parents=True, exist_ok=True)
     samples = []
@@ -1132,7 +1132,7 @@ def run_hsqc_v5_style_clustering(
     return blocks
 
 # =============================================================================
-# ReCQC 3.0 additions: single-spectrum 13C clustering and full 2D HSQC PMTC/QG-PMTC flow
+# CORD-NMR single-spectrum 13C clustering and full 2D HSQC PMTC/QG-PMTC flow
 # =============================================================================
 
 @dataclass
@@ -1281,7 +1281,7 @@ def run_c_presence_mask_clustering(
         _v4_modules,
     )
 
-    with tempfile.TemporaryDirectory(prefix="recqc30_presence_c_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="cord_nmr_presence_c_") as tmp:
         tmpdir = Path(tmp)
         sample_ids = [f"S{i + 1}" for i in range(len(sample_files))]
         norm_files: List[Path] = []
@@ -1551,7 +1551,7 @@ def run_c_common_mask_backend_clustering(
         guarded_recall_quality_labels,
     )
 
-    with tempfile.TemporaryDirectory(prefix="recqc30_common_backend_c_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="cord_nmr_common_backend_c_") as tmp:
         tmpdir = Path(tmp)
         norm_files: List[Path] = []
         for i, path in enumerate(sample_files, 1):
@@ -1769,7 +1769,7 @@ def run_c_single_spectrum_gap_clustering(
     This mode is deliberately separate from V5 cross-sample clustering.  With one spectrum
     there is no co-variation evidence, so the result is an editable C_untyped candidate
     grouping based on region-aware ppm gaps, cluster-size control, and optional intensity-gap
-    splitting.  Each block can still be edited and sent to ReCQC C_untyped database analysis.
+    splitting. Each block can still be edited and sent to CORD-NMR C_untyped database analysis.
     """
     if not sample_files:
         raise ValueError("Please select at least one 13C peak-list file.")
@@ -1881,7 +1881,7 @@ def run_c_single_spectrum_clustering(
     if gmm_min_components <= 0 or gmm_max_components < gmm_min_components:
         raise ValueError("GMM component limits must satisfy 1 <= min <= max.")
 
-    root = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="recqc30_single_spectrum_"))
+    root = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="cord_nmr_single_spectrum_"))
     root.mkdir(parents=True, exist_ok=True)
     cfg = _single_spectrum_pipeline_config(
         use_type=use_type,

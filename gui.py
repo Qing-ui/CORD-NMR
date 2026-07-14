@@ -55,7 +55,7 @@ from CombineScorerResult import *
 import json
 import re
 
-from recqc_cluster import (
+from cord_nmr_cluster import (
     DEFAULT_REGION_WINDOWS,
     format_c_values,
     format_hsqc_points,
@@ -88,6 +88,10 @@ from services.nmr_assignment import (
     prepare_display_molecule,
     write_assigned_sdf,
 )
+
+APP_NAME = "CORD-NMR"
+APP_VERSION = "1.0.0"
+APP_DISPLAY_NAME = f"{APP_NAME} {APP_VERSION}"
 
 C_FRONTEND_LABELS = [
     "global strict",
@@ -1288,7 +1292,7 @@ class CHMatchModeFrame(BaseModeFrame):
 
 
 class ClusterResultWindow:
-    """Editable popup window for ReCQC 3.0 clustering results."""
+    """Editable popup window for CORD-NMR clustering results."""
 
     def __init__(self, app, owner_frame, clusters, kind, output_dir=None):
         self.app = app
@@ -1304,7 +1308,7 @@ class ClusterResultWindow:
 
     def create_result_window(self):
         win = tk.Toplevel(self.app)
-        win.title(f"ReCQC 3.0 {self.kind} clustering results")
+        win.title(f"{APP_DISPLAY_NAME} {self.kind} clustering results")
         win.geometry("900x650")
         win.configure(bg=ChemTheme.COLORS['background'])
 
@@ -1320,8 +1324,8 @@ class ClusterResultWindow:
             ttk.Label(win, text=f"Full run outputs: {self.output_dir}").pack(fill=tk.X, padx=12, pady=(0, 6))
 
         tip = (
-            "C clusters use the same format as ReCQC C_untyped input. "
-            "HSQC clusters use the same point-list format as ReCQC HSQC All_type input."
+            "C clusters use the same format as CORD-NMR C_untyped input. "
+            "HSQC clusters use the same point-list format as CORD-NMR HSQC All_type input."
         )
         ttk.Label(win, text=tip).pack(fill=tk.X, padx=12, pady=(0, 8))
 
@@ -1544,7 +1548,7 @@ class ClusterResultWindow:
 
 
 class ClusterModeFrame(ttk.Frame):
-    """Fourth ReCQC module: full cross-spectrum clustering workflow."""
+    """CORD-NMR cross-spectrum clustering workflow."""
 
     def __init__(self, master):
         super().__init__(master)
@@ -2470,7 +2474,7 @@ class ClusterModeFrame(ttk.Frame):
 
 
 class NMRPredictionFrame(ttk.Frame):
-    """English ReCQC wrapper around the portable NMR prediction engine."""
+    """CORD-NMR wrapper around the portable NMR prediction engine."""
 
     def __init__(self, master):
         super().__init__(master)
@@ -2768,7 +2772,7 @@ class NMRPredictionFrame(ttk.Frame):
 
 
 class NMRAssignmentFrame(ttk.Frame):
-    """Fifth ReCQC module: predicted-structure based NMR assignment."""
+    """CORD-NMR predicted-structure-based NMR assignment workflow."""
 
     EXAMPLE_SMILES = r"CC([C@@H]1OC([C@@H]2[C@H](C2(C)C)/C=C(C(OC)=O)\C)=O)=C(C(C1)=O)C/C=C\C=C"
 
@@ -4198,7 +4202,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("ReCQC 3.0 - Natural product analysis with C/HSQC clustering and NMR prediction")
+        self.title(f"{APP_DISPLAY_NAME} - Natural product analysis with C/HSQC clustering and NMR prediction")
         self.geometry("1120x780")
         self.minsize(980, 680)
         self.configure(bg=ChemTheme.COLORS['background'])
@@ -4208,7 +4212,7 @@ class App(tk.Tk):
     def create_ui(self):
 
         header = ttk.Frame(self, style='Header.TFrame')
-        ttk.Label(header, text="ReCQC 3.0", style='Header.TLabel', font=ChemTheme.FONTS['title']).pack(pady=(12, 2))
+        ttk.Label(header, text=APP_DISPLAY_NAME, style='Header.TLabel', font=ChemTheme.FONTS['title']).pack(pady=(12, 2))
         ttk.Label(header, text="Analysis of natural product mixtures based on C spectrum and HSQC spectrum",
                   style='Subheader.TLabel', font=ChemTheme.FONTS['subtitle']).pack(pady=(0, 12))
         header.pack(fill=tk.X)
