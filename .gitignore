@@ -1,0 +1,55 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+
+# Bundled predictor runtimes and weights belong in release artifacts only
+external/NMR-Predictor-Portable/envs/
+external/NMR-Predictor-Portable/models/
+
+# User inputs, generated databases, and analysis output
+chem_data.db*
+*.sqlite
+*.sqlite3
+*.sdf
+*.sd
+*.csv
+*.xlsx
+*.xls
+results/
+combined_results/
+molecule_plots/
+paper_figures/
+experiments/
+tmp/
+
+# Archives and manuscript material are never tracked
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+*.tex
+*.bib
+*.ris
+*.enw
+*manuscript*
+*draft*
+*supplement*
+PACKAGE_MANIFEST.txt
+
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
