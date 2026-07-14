@@ -55,7 +55,7 @@ from CombineScorerResult import *
 import json
 import re
 
-from cord_nmr_cluster import (
+from recqc_cluster import (
     DEFAULT_REGION_WINDOWS,
     format_c_values,
     format_hsqc_points,

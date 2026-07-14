@@ -54,7 +54,7 @@ public software distribution.
 ```text
 gui.py                         desktop application entry point
 Carbon* / HSQC* / Combine*     dereplication scoring and result views
-cord_nmr_cluster.py            GUI-facing clustering orchestration
+recqc_cluster.py               GUI-facing clustering orchestration
 nmr_trendtrack/                continuous-series clustering implementation
 single_spectrum/               single-spectrum correction and clustering
 services/                      correction, prediction, and assignment services
