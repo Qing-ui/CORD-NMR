@@ -91,7 +91,7 @@ from services.nmr_assignment import (
 
 APP_NAME = "CORD-NMR"
 APP_VERSION = "1.0.0"
-APP_DISPLAY_NAME = f"{APP_NAME} {APP_VERSION}"
+APP_DISPLAY_NAME = APP_NAME
 
 C_FRONTEND_LABELS = [
     "global strict",
