@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import subprocess
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -10,68 +9,24 @@ from pathlib import Path, PurePosixPath
 
 RELEASE_VERSION = "1.0.0"
 ARCHIVE_PREFIX = f"CORD-NMR-v{RELEASE_VERSION}"
-SKIP_DIR_NAMES = {
-    ".git",
-    ".github",
-    ".idea",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".vscode",
-    "__pycache__",
-    "benchmarks",
-    "cache",
-    "contrib",
-    "docs",
-    "examples",
-    "include",
-    "sample_data",
-    "test",
-    "testdata",
-    "testing",
-    "tests",
+ROOT_RUNTIME_FILES = {
+    "Install-CORD-NMR.bat",
+    "LICENSE",
+    "README.md",
+    "requirements.txt",
+    "run_gui.bat",
 }
-SKIP_SUFFIXES = {
-    ".a",
-    ".bib",
-    ".c",
-    ".cc",
-    ".cpp",
-    ".csv",
-    ".cu",
-    ".doc",
-    ".docx",
-    ".enw",
-    ".h",
-    ".hpp",
-    ".ipynb",
-    ".lib",
-    ".log",
-    ".pdb",
-    ".pdf",
-    ".ppt",
-    ".pptx",
-    ".pxd",
-    ".pyc",
-    ".pyo",
-    ".pyx",
-    ".rar",
-    ".ris",
-    ".sd",
-    ".sdf",
-    ".tar",
-    ".tex",
-    ".xls",
-    ".xlsx",
-    ".zip",
-    ".7z",
+RUNTIME_PREFIXES = {
+    "nmr_trendtrack",
+    "services",
+    "single_spectrum",
 }
-
-
-def long_path(path: Path) -> str:
-    resolved = str(path.resolve())
-    if os.name == "nt" and not resolved.startswith("\\\\?\\"):
-        return "\\\\?\\" + resolved
-    return resolved
+EXTERNAL_RUNTIME_FILES = {
+    Path("external/NMR-Predictor-Portable/MODEL_ASSETS.md"),
+    Path("external/NMR-Predictor-Portable/README.md"),
+    Path("external/NMR-Predictor-Portable/requirements-cascade2.txt"),
+    Path("external/NMR-Predictor-Portable/requirements-nmrnet.txt"),
+}
 
 
 def tracked_source_files(repo_root: Path) -> list[Path]:
@@ -81,18 +36,19 @@ def tracked_source_files(repo_root: Path) -> list[Path]:
     return [repo_root / item for item in output.splitlines() if item]
 
 
-def iter_runtime_files(root: Path):
-    root_text = long_path(root)
-    for current, directories, filenames in os.walk(root_text, topdown=True):
-        directories[:] = [
-            name for name in directories if name.lower() not in SKIP_DIR_NAMES
-        ]
-        current_path = Path(current)
-        for filename in filenames:
-            source = current_path / filename
-            if source.suffix.lower() in SKIP_SUFFIXES:
-                continue
-            yield source
+def is_runtime_file(relative: Path) -> bool:
+    if len(relative.parts) == 1:
+        return relative.name in ROOT_RUNTIME_FILES or relative.suffix == ".py"
+    if relative.parts[0] in RUNTIME_PREFIXES:
+        return relative.suffix == ".py"
+    if relative.parts[:3] == ("external", "NMR-Predictor-Portable", "app"):
+        return relative.suffix in {".bat", ".py", ".txt"}
+    if relative in EXTERNAL_RUNTIME_FILES:
+        return True
+    return relative in {
+        Path("docs/THIRD_PARTY_NOTICES.md"),
+        Path("scripts/install_prediction_runtime.ps1"),
+    }
 
 
 def archive_name(relative: Path) -> str:
@@ -105,28 +61,23 @@ def add_file(
     relative: Path,
     counters: dict[str, int],
 ) -> None:
-    archive.write(str(source), archive_name(relative))
+    archive.write(source, archive_name(relative))
     counters["files"] += 1
     counters["bytes"] += source.stat().st_size
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--launcher", type=Path, required=True)
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
-    runtime_root = args.runtime_root.resolve()
-    predictor_root = runtime_root / "external" / "NMR-Predictor-Portable"
-    required = [
-        predictor_root / "envs" / "nmrnet" / "python.exe",
-        predictor_root / "envs" / "cascade2" / "python.exe",
-        predictor_root / "models" / "nmrnet",
-        predictor_root / "models" / "cascade2",
-        args.launcher,
+    runtime_files = [
+        source
+        for source in tracked_source_files(repo_root)
+        if is_runtime_file(source.relative_to(repo_root))
     ]
+    required = [repo_root / name for name in ROOT_RUNTIME_FILES]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise FileNotFoundError("Missing required release inputs:\n" + "\n".join(missing))
@@ -140,37 +91,23 @@ def main() -> int:
         args.output,
         mode="w",
         compression=zipfile.ZIP_DEFLATED,
-        compresslevel=6,
+        compresslevel=9,
         allowZip64=True,
     ) as archive:
-        for source in tracked_source_files(repo_root):
-            relative = source.relative_to(repo_root)
-            if relative.parts[:2] == (".github", "workflows"):
-                continue
-            add_file(archive, source, relative, counters)
-
-        add_file(archive, args.launcher, Path("CORD-NMR.exe"), counters)
-
-        for folder in ("envs", "models"):
-            source_root = predictor_root / folder
-            for source in iter_runtime_files(source_root):
-                relative = Path(
-                    "external",
-                    "NMR-Predictor-Portable",
-                    folder,
-                    *source.relative_to(Path(long_path(source_root))).parts,
-                )
-                add_file(archive, source, relative, counters)
+        for source in runtime_files:
+            add_file(archive, source, source.relative_to(repo_root), counters)
 
         manifest = (
-            "CORD-NMR curated Windows portable release\n"
+            "CORD-NMR Windows installer release\n"
             f"Version: v{RELEASE_VERSION}\n"
             f"Files: {counters['files']}\n"
             f"Uncompressed bytes: {counters['bytes']}\n\n"
-            "Included: GUI source, runtime launcher, required Python environments, "
-            "NMRNet and CASCADE-2.0 weights.\n"
-            "Excluded: manuscript files, research datasets, generated databases, "
-            "results, caches, tests, examples, headers, and development artifacts.\n"
+            "Included: GUI runtime source, one-click installer, pinned dependency "
+            "definitions, prediction bridge source, and third-party notices.\n"
+            "Downloaded during installation: isolated Python environments and the "
+            "four verified inference assets published with release v1.0.0.\n"
+            "Excluded: training data, manuscripts, research datasets, generated "
+            "results, caches, tests, notebooks, and development artifacts.\n"
         )
         archive.writestr(archive_name(Path("RELEASE_MANIFEST.txt")), manifest)
 

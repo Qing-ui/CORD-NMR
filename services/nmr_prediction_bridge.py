@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -66,19 +67,48 @@ def predictor_paths(root: str | Path | None = None) -> tuple[Path, Path, Path, P
     script = root_path / "app" / "script" / "predict_nmr_unified.py"
     nmrnet_python = root_path / "envs" / "nmrnet" / "python.exe"
     cascade2_python = root_path / "envs" / "cascade2" / "python.exe"
+    config_path = root_path / "runtime-paths.json"
+    if config_path.exists():
+        try:
+            configured = json.loads(config_path.read_text(encoding="utf-8-sig"))
+            if configured.get("nmrnet_python"):
+                nmrnet_python = Path(configured["nmrnet_python"]).expanduser()
+            if configured.get("cascade2_python"):
+                cascade2_python = Path(configured["cascade2_python"]).expanduser()
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+            pass
     return root_path, script, nmrnet_python, cascade2_python
 
 
 def describe_nmr_predictor_root(root: str | Path | None = None) -> NMRPredictorStatus:
     root_path, script, nmrnet_python, cascade2_python = predictor_paths(root)
+    liquid_root = root_path / "models" / "nmrnet" / "liquid"
+    c_model_root = liquid_root / "C_mol_pre_all_h_220816_global_0_kener_gauss_atomdes_0_unimol_large_atom_regloss_mae_lr_1e-3_bs_16_0.06_200"
+    h_model_root = liquid_root / "H_mol_pre_all_h_220816_global_0_kener_gauss_atomdes_0_unimol_large_atom_regloss_mae_lr_5e-3_bs_16_0.06_400"
+    nmrnet_files = [
+        root_path / "app" / "unicore" / "__init__.py",
+        liquid_root / "mol_dict.txt",
+        c_model_root / "target_scaler.ss",
+        c_model_root / "cv_seed_42_fold_0" / "checkpoint_best.pt",
+        h_model_root / "target_scaler.ss",
+        h_model_root / "cv_seed_42_fold_0" / "checkpoint_best.pt",
+    ]
+    cascade_model_root = root_path / "models" / "cascade2" / "Predict_SMILES_FF_GPR"
+    cascade2_files = [
+        cascade_model_root / "model.py",
+        cascade_model_root / "preprocessor_orig.p",
+        cascade_model_root / "best_model_val_mae.h5",
+    ]
     missing_required: List[str] = []
     missing_optional: List[str] = []
     if not script.exists():
         missing_required.append(str(script))
     if not nmrnet_python.exists():
         missing_required.append(str(nmrnet_python))
+    missing_required.extend(str(path) for path in nmrnet_files if not path.exists())
     if not cascade2_python.exists():
         missing_optional.append(str(cascade2_python))
+    missing_optional.extend(str(path) for path in cascade2_files if not path.exists())
     return NMRPredictorStatus(
         root=root_path,
         script=script,

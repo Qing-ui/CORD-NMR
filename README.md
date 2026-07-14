@@ -29,18 +29,27 @@ python -m pip install -r requirements.txt
 python gui.py
 ```
 
-`run_gui.bat` starts the same GUI using the active `python` command.
+For a source checkout, start the application with `python gui.py` after
+activating the environment above. The Release launcher `run_gui.bat` uses the
+isolated interpreter written by `Install-CORD-NMR.bat`.
 
 ## Prediction runtime
 
 The core GUI and scoring/clustering workflows install from this repository.
 NMRNet and CASCADE-2.0 additionally require their model weights and specialized
-Python environments. These large runtime components are excluded from Git and
-are supplied only in a curated portable Release package.
+Python environments. These large runtime components are excluded from Git.
+After extracting the Windows Release, double-click `Install-CORD-NMR.bat` once.
+The installer creates an isolated GUI environment plus separate NMRNet and
+CASCADE-2.0 environments, downloads the verified inference-only model assets,
+and connects all three environments to `run_gui.bat`. It does not download
+training data or unrelated models, and it does not require a preinstalled
+Python distribution.
 
 The expected runtime layout is documented in
 [`external/NMR-Predictor-Portable/README.md`](external/NMR-Predictor-Portable/README.md).
 The GUI can also use a compatible predictor runtime selected from its interface.
+Third-party copyrights, licenses, sources, and citations are documented in
+[`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md).
 
 ## Runtime data
 
@@ -64,6 +73,12 @@ scripts/check_publication.py   repository publication guard
 
 See [`docs/PUBLICATION_SCOPE.md`](docs/PUBLICATION_SCOPE.md) for the explicit
 inclusion and exclusion policy.
+
+## Recommended reading
+
+Deng C, Dong T, Zhang M, et al. Computer-Assisted Analytical Workflows for
+Natural Product Dereplication, Structure Elucidation, and Bioactivity-Oriented
+Prioritization. *Analytical Chemistry*. https://doi.org/10.1021/acs.analchem.6c02967
 
 ## License
 

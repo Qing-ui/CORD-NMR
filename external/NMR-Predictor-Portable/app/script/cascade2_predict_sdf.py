@@ -196,6 +196,7 @@ def main():
         for serial, row in enumerate(group.itertuples(index=False)):
             lines.append(f"{serial}[{int(row.atom_index) + 1}]\t{float(row.cascade2_13c_shift_ppm):.2f}")
         out_mol = Chem.Mol(prepared_mol.mol)
+        out_mol.SetProp("_Name", molecule_id)
         out_mol.SetProp("CASCADE2 Predicted 13C shifts", "\n".join(lines))
         writer.write(out_mol)
     writer.close()
