@@ -40,56 +40,6 @@ class AlignConfig:
 
 
 @dataclass
-class TrendConfig:
-    epsilon: float = 1e-8
-    use_area_instead_of_height: bool = False
-    normalization_method: str = "none"
-    min_valid_steps: int = 1
-
-
-@dataclass
-class ClusterConfig:
-    max_clusters_per_mask: int = 4
-    min_cluster_size: int = 3
-    shared_prob_min: float = 0.30
-    shared_gap_max: float = 0.08
-    uncertain_prob_max: float = 0.45
-    student_t_nu: float = 4.0
-    max_em_iters: int = 80
-    em_tol: float = 1e-4
-    min_variance: float = 1e-4
-    max_families_per_mask: int = 3
-    max_amplitude_bins_per_family: int = 1
-    family_kappa: float = 8.0
-    family_cosine_merge_min: float = 0.92
-    family_distance_merge_max: float = 0.55
-    family_sign_zero_band: float = 0.12
-    use_directional_family_clustering: bool = False
-    merge_similar_families: bool = True
-    prefer_raw_trend_space: bool = True
-    enable_amplitude_binning: bool = False
-    amplitude_boundary_tau: float = 0.35
-    amplitude_split_min_gain: float = 2.0
-    amplitude_split_min_separation: float = 1.1
-    amplitude_split_max_overlap: float = 0.42
-    allow_shared_reuse: bool = True
-    cluster_backend: str = "t_mixture"
-    hac_metric: str = "euclidean"
-    hac_linkage: str = "ward"
-    hac_corr_weight: float = 0.20
-    hac_temperature: float = 0.35
-    hac_zscore: bool = True
-
-
-@dataclass
-class OptimizeConfig:
-    n_outer_iters: int = 100
-    n_starts: int = 1
-    convergence_tol: float = 1e-4
-    trend_bonus_weight: float = 0.75
-
-
-@dataclass
 class ModelConfig:
     # Default GUI/CLI model: V5-PMTC-R85, from raw blind peaklists.
     name: str = "v5_pmtc"
@@ -108,12 +58,6 @@ class ModelConfig:
     pmtc_max_tracks_by_n_samples: Dict[int, int] = field(default_factory=lambda: {3: 32, 4: 28, 5: 26})
     pmtc_frac_limit_by_n_samples: Dict[int, float] = field(default_factory=lambda: {3: 0.55, 4: 0.47, 5: 0.41})
     pmtc_min_cluster_size: int = 3
-
-    # Optional enumerated V5 front-end. It generates all presence masks inside
-    # the configured ppm/span window, then exact-covers each local window.
-    enum_max_options_per_component: int = 160
-    enum_node_limit: int = 350000
-    enum_cluster_beam_width: int = 400
 
     # Guarded recall-quality backend. It starts from V5-PMTC labels and only
     # accepts profile merges or HAC splits when internal quality guards pass.
@@ -135,7 +79,4 @@ class ModelConfig:
 @dataclass
 class AppConfig:
     align: AlignConfig = field(default_factory=AlignConfig)
-    trend: TrendConfig = field(default_factory=TrendConfig)
-    cluster: ClusterConfig = field(default_factory=ClusterConfig)
-    optimize: OptimizeConfig = field(default_factory=OptimizeConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
