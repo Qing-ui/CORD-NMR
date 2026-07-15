@@ -50,54 +50,30 @@ DEFAULT_REGION_WINDOWS: List[Tuple[float, float, float]] = [
 
 
 MODEL_DISPLAY_NAMES: Dict[str, str] = {
-    "original_t": "TTC",
-    "v4_baseline": "SPTC",
     "v5_pmtc": "PMTC",
-    "v5_pmtc_r85": "PMTC",
     "v5_enum": "QG-PMTC",
-    "v5_enum_mask": "DMP",
     "v5_frontend_mask": "SP-Mask",
-    "v5_pmtc_mask": "SP-Mask",
-    "v5_mask": "SP-Mask",
 }
 
 MODEL_FULL_NAMES: Dict[str, str] = {
-    "original_t": "tolerance-based trajectory clustering",
-    "v4_baseline": "set-packing trajectory clustering",
     "v5_pmtc": "presence-mask and trend clustering",
-    "v5_pmtc_r85": "presence-mask and trend clustering",
     "v5_enum": "quality-guarded PMTC",
-    "v5_enum_mask": "direct mask-pooling ablation",
     "v5_frontend_mask": "set-packing mask-only ablation",
-    "v5_pmtc_mask": "set-packing mask-only ablation",
-    "v5_mask": "set-packing mask-only ablation",
 }
 
 MODEL_DESCRIPTIONS: Dict[str, str] = {
-    "original_t": "ppm tolerance-driven early trajectory connection",
-    "v4_baseline": "seed-based candidate trajectory generation and conflict-constrained set-packing",
     "v5_pmtc": "presence-mask binning and intensity-profile-based bucket splitting",
-    "v5_pmtc_r85": "presence-mask binning and intensity-profile-based bucket splitting",
     "v5_enum": "SPTC front end, PMTC initial labels and quality-guarded merge/split refinement",
-    "v5_enum_mask": "early direct mask-pooling output without PMTC/guarded refinement",
     "v5_frontend_mask": "set-packing front end followed only by presence-mask grouping",
-    "v5_pmtc_mask": "set-packing front end followed only by presence-mask grouping",
-    "v5_mask": "set-packing front end followed only by presence-mask grouping",
 }
 
 MODEL_DISPLAY_ALIASES: Dict[str, str] = {
-    "ttc": "original_t",
-    "tolerance_based_trajectory_clustering": "original_t",
-    "sptc": "v4_baseline",
-    "set_packing_trajectory_clustering": "v4_baseline",
     "pmtc": "v5_pmtc",
     "presence_mask_and_trend_clustering": "v5_pmtc",
     "qg_pmtc": "v5_enum",
     "quality_guarded_pmtc": "v5_enum",
     "sp_mask": "v5_frontend_mask",
     "set_packing_mask_only_ablation": "v5_frontend_mask",
-    "dmp": "v5_enum_mask",
-    "direct_mask_pooling_ablation": "v5_enum_mask",
 }
 
 
@@ -494,14 +470,8 @@ def run_c_v5_clustering(
             mask_counts[mask] += 1
         mask = max(mask_counts.items(), key=lambda kv: kv[1])[0] if mask_counts else ""
         normalized_model = normalize_model_key(model)
-        if normalized_model in {"v5_enum_mask", "v5_enumerated_mask", "enumerated_v5_mask"}:
-            backend_note = model_display_label("v5_enum_mask")
-        elif normalized_model in {"v5_enum", "v5_enumerated", "enumerated_v5"}:
+        if normalized_model == "v5_enum":
             backend_note = model_display_label("v5_enum")
-        elif normalized_model in {"v4", "v4_baseline", "baseline"}:
-            backend_note = model_display_label("v4_baseline")
-        elif normalized_model in {"original", "original_t", "t", "t_mixture"}:
-            backend_note = model_display_label("original_t")
         else:
             backend_note = model_display_label("v5_pmtc")
         mask_counts_txt = ",".join(f"{m}:{n}" for m, n in sorted(mask_counts.items(), reverse=True))
@@ -613,155 +583,6 @@ def _apply_hsqc_intensity_correction(
         f"correction=on; mode={meta.get('calibration_mode', '')}; "
         f"used_area={meta.get('used_area', '')}; model={result.model_path}"
     )
-
-
-def _hsqc_dist(a: HSQCPeak, b: HSQCPeak, c_tol: float, h_tol: float) -> float:
-    return math.sqrt(((a.c_ppm - b.c_ppm) / max(c_tol, 1e-12)) ** 2 + ((a.h_ppm - b.h_ppm) / max(h_tol, 1e-12)) ** 2)
-
-
-def _best_match(source: HSQCPeak, target_peaks: Sequence[HSQCPeak], c_tol: float, h_tol: float) -> Optional[HSQCPeak]:
-    opts = []
-    for p in target_peaks:
-        if abs(p.c_ppm - source.c_ppm) <= c_tol and abs(p.h_ppm - source.h_ppm) <= h_tol:
-            opts.append((_hsqc_dist(source, p, c_tol, h_tol), p))
-    return min(opts, key=lambda x: x[0])[1] if opts else None
-
-
-def _candidate_track_from_seed(
-    seed: HSQCPeak,
-    peaks_by_sample: Dict[str, List[HSQCPeak]],
-    sample_ids: Sequence[str],
-    *,
-    c_tol: float,
-    h_tol: float,
-    c_span_tol: float,
-    h_span_tol: float,
-    min_track_size: int,
-    candidate_min_score: float,
-    pair_score_weight: float,
-    reciprocal_best_bonus: float,
-) -> Optional[HSQCTrack]:
-    members: Dict[str, HSQCPeak] = {}
-    dists = []
-    reciprocal_hits = 0
-    pair_tests = 0
-
-    for sid in sample_ids:
-        best = _best_match(seed, peaks_by_sample.get(sid, []), c_tol, h_tol)
-        if best is None:
-            continue
-        members[sid] = best
-        dists.append(_hsqc_dist(seed, best, c_tol, h_tol))
-        if sid != seed.sample_id:
-            pair_tests += 1
-            back = _best_match(best, peaks_by_sample.get(seed.sample_id, []), c_tol, h_tol)
-            if back is not None and back.peak_id == seed.peak_id:
-                reciprocal_hits += 1
-
-    if len(members) < max(2, int(min_track_size)):
-        return None
-    c_vals = [p.c_ppm for p in members.values()]
-    h_vals = [p.h_ppm for p in members.values()]
-    c_span = max(c_vals) - min(c_vals) if len(c_vals) > 1 else 0.0
-    h_span = max(h_vals) - min(h_vals) if len(h_vals) > 1 else 0.0
-    if c_span > c_span_tol or h_span > h_span_tol:
-        return None
-
-    center_c = sum(c_vals) / len(c_vals)
-    center_h = sum(h_vals) / len(h_vals)
-    coverage = len(members) / max(1, len(sample_ids))
-    closeness = 1.0 / (1.0 + (sum(dists) / max(1, len(dists))))
-    reciprocal_fraction = reciprocal_hits / max(1, pair_tests)
-    span_penalty = 0.18 * (c_span / max(c_span_tol, 1e-12) + h_span / max(h_span_tol, 1e-12))
-    score = coverage + pair_score_weight * 0.25 * closeness + reciprocal_best_bonus * reciprocal_fraction - span_penalty
-    if score < candidate_min_score:
-        return None
-    return HSQCTrack(
-        track_id="",
-        members=members,
-        center_c=center_c,
-        center_h=center_h,
-        c_span=c_span,
-        h_span=h_span,
-        score=score,
-        reciprocal_fraction=reciprocal_fraction,
-    )
-
-
-def build_hsqc_tracks(
-    peaks_by_sample: Dict[str, List[HSQCPeak]],
-    sample_ids: Sequence[str],
-    *,
-    c_tol: float = 1.0,
-    h_tol: float = 0.1,
-    c_span_tol: float = 1.0,
-    h_span_tol: float = 0.1,
-    min_track_size: int = 2,
-    candidate_min_score: float = 0.40,
-    pair_score_weight: float = 1.20,
-    reciprocal_best_bonus: float = 0.18,
-    keep_singletons: bool = True,
-) -> List[HSQCTrack]:
-    candidates: Dict[Tuple[str, ...], HSQCTrack] = {}
-    for sid in sample_ids:
-        for seed in peaks_by_sample.get(sid, []):
-            cand = _candidate_track_from_seed(
-                seed,
-                peaks_by_sample,
-                sample_ids,
-                c_tol=c_tol,
-                h_tol=h_tol,
-                c_span_tol=c_span_tol,
-                h_span_tol=h_span_tol,
-                min_track_size=min_track_size,
-                candidate_min_score=candidate_min_score,
-                pair_score_weight=pair_score_weight,
-                reciprocal_best_bonus=reciprocal_best_bonus,
-            )
-            if cand is None:
-                continue
-            key = tuple(sorted(p.peak_id for p in cand.members.values()))
-            old = candidates.get(key)
-            if old is None or cand.score > old.score:
-                candidates[key] = cand
-
-    used: set[str] = set()
-    selected: List[HSQCTrack] = []
-    ordered_candidates = sorted(
-        candidates.values(),
-        key=lambda t: (len(t.members), t.score, t.reciprocal_fraction, -t.c_span, -t.h_span),
-        reverse=True,
-    )
-    for cand in ordered_candidates:
-        ids = {p.peak_id for p in cand.members.values()}
-        if used & ids:
-            continue
-        selected.append(cand)
-        used.update(ids)
-
-    if keep_singletons:
-        # Keep unmatched peaks visible so the user can still inspect/edit them, but they go to unassigned.
-        for sid in sample_ids:
-            for p in peaks_by_sample.get(sid, []):
-                if p.peak_id not in used:
-                    selected.append(
-                        HSQCTrack(
-                            track_id="",
-                            members={sid: p},
-                            center_c=p.c_ppm,
-                            center_h=p.h_ppm,
-                            c_span=0.0,
-                            h_span=0.0,
-                            score=0.0,
-                            reciprocal_fraction=0.0,
-                        )
-                    )
-                    used.add(p.peak_id)
-
-    selected.sort(key=lambda t: (t.center_c, t.center_h))
-    for i, t in enumerate(selected, 1):
-        t.track_id = f"T{i:04d}"
-    return selected
 
 
 def _presence_mask_track(track: HSQCTrack, sample_ids: Sequence[str]) -> str:
@@ -999,185 +820,6 @@ def _apply_hsqc_sample_specific_residual_peak_filter(
     }
 
 
-def _pmtc_hsqc_labels(
-    tracks: List[HSQCTrack],
-    sample_ids: Sequence[str],
-    *,
-    pmtc_max_tracks_by_n_samples: Optional[Dict[int, int]] = None,
-    pmtc_frac_limit_by_n_samples: Optional[Dict[int, float]] = None,
-    pmtc_min_cluster_size: int = 3,
-) -> List[str]:
-    n = len(tracks)
-    ns = len(sample_ids)
-    max_tracks_map = pmtc_max_tracks_by_n_samples or {3: 32, 4: 28, 5: 26}
-    frac_map = pmtc_frac_limit_by_n_samples or {3: 0.55, 4: 0.47, 5: 0.41}
-    max_tracks = int(max_tracks_map.get(ns, max_tracks_map.get(str(ns), 26)))
-    frac_limit = float(frac_map.get(ns, frac_map.get(str(ns), 0.41)))
-    min_cluster_size = int(pmtc_min_cluster_size)
-
-    buckets: Dict[str, List[int]] = defaultdict(list)
-    unassigned: List[int] = []
-    for i, t in enumerate(tracks):
-        if len(t.members) >= 2:
-            buckets[_presence_mask_track(t, sample_ids)].append(i)
-        else:
-            unassigned.append(i)
-
-    clusters: List[List[int]] = []
-    for _, idxs in sorted(buckets.items()):
-        if len(idxs) <= max(min_cluster_size, max_tracks):
-            clusters.append(list(idxs))
-        else:
-            k = max(1, math.ceil(len(idxs) / max_tracks))
-            clusters.extend(_split_hsqc_indices(list(idxs), tracks, sample_ids, k))
-
-    max_size = max(max_tracks, int(math.ceil(frac_limit * max(n, 1))))
-    for _ in range(20):
-        changed = False
-        new_clusters: List[List[int]] = []
-        for c in clusters:
-            if len(c) > max_size and len(c) > 2 * min_cluster_size:
-                k = math.ceil(len(c) / max_size)
-                parts = _split_hsqc_indices(c, tracks, sample_ids, k)
-                if len(parts) == 1 and parts[0] == c:
-                    new_clusters.append(c)
-                else:
-                    new_clusters.extend(parts)
-                    changed = True
-            else:
-                new_clusters.append(c)
-        clusters = new_clusters
-        if not changed:
-            break
-
-    labels = ["HSQC_unassigned"] * n
-    clusters = sorted([c for c in clusters if c], key=lambda c: min(c))
-    for ci, c in enumerate(clusters, 1):
-        for i in c:
-            labels[i] = f"H{ci:02d}"
-    for i in unassigned:
-        labels[i] = "HSQC_unassigned"
-    return labels
-
-
-def run_hsqc_v5_style_clustering(
-    sample_files: Sequence[str],
-    *,
-    c_tol: float = 1.0,
-    h_tol: float = 0.1,
-    c_span_tol: float = 1.0,
-    h_span_tol: float = 0.1,
-    min_track_size: int = 2,
-    candidate_min_score: float = 0.40,
-    pair_score_weight: float = 1.20,
-    reciprocal_best_bonus: float = 0.18,
-    pmtc_max_tracks_by_n_samples: Optional[Dict[int, int]] = None,
-    pmtc_frac_limit_by_n_samples: Optional[Dict[int, float]] = None,
-    pmtc_min_cluster_size: int = 3,
-) -> List[ClusterBlock]:
-    if len(sample_files) < 2:
-        raise ValueError("HSQC PMTC-style clustering needs at least two sample peak-list files.")
-    if min(c_tol, h_tol, c_span_tol, h_span_tol) <= 0:
-        raise ValueError("HSQC C/H tolerance and C/H span tolerances must be positive.")
-
-    sample_ids = [f"S{i + 1}" for i in range(len(sample_files))]
-    peaks_by_sample = {sid: load_hsqc_peaklist(path, sid) for sid, path in zip(sample_ids, sample_files)}
-    if not any(peaks_by_sample.values()):
-        raise ValueError("No HSQC peaks were read. Use CPPM,HPPM,intensity or c_ppm,h_ppm,intensity.")
-
-    tracks = build_hsqc_tracks(
-        peaks_by_sample,
-        sample_ids,
-        c_tol=c_tol,
-        h_tol=h_tol,
-        c_span_tol=c_span_tol,
-        h_span_tol=h_span_tol,
-        min_track_size=min_track_size,
-        candidate_min_score=candidate_min_score,
-        pair_score_weight=pair_score_weight,
-        reciprocal_best_bonus=reciprocal_best_bonus,
-        keep_singletons=True,
-    )
-    labels = _pmtc_hsqc_labels(
-        tracks,
-        sample_ids,
-        pmtc_max_tracks_by_n_samples=pmtc_max_tracks_by_n_samples,
-        pmtc_frac_limit_by_n_samples=pmtc_frac_limit_by_n_samples,
-        pmtc_min_cluster_size=pmtc_min_cluster_size,
-    )
-    groups: Dict[str, List[HSQCTrack]] = defaultdict(list)
-    for lab, track in zip(labels, tracks):
-        groups[lab].append(track)
-
-    blocks: List[ClusterBlock] = []
-    for cid in sorted(groups, key=lambda x: (x.endswith("unassigned"), x)):
-        ts = groups[cid]
-        vals = [(float(t.center_c), float(t.center_h)) for t in ts]
-        mask_counts: Dict[str, int] = defaultdict(int)
-        for t in ts:
-            mask_counts[_presence_mask_track(t, sample_ids)] += 1
-        mask = max(mask_counts.items(), key=lambda kv: kv[1])[0] if mask_counts else ""
-        avg_score = sum(t.score for t in ts) / len(ts) if ts else 0.0
-        details = (
-            f"HSQC PMTC-style tracks={len(ts)}; C_tol={c_tol:g}; H_tol={h_tol:g}; "
-            f"C_span≤{c_span_tol:g}; H_span≤{h_span_tol:g}; min_track_size={min_track_size}; "
-            f"candidate_min_score={candidate_min_score:g}; avg_score={avg_score:.3f}; dominant_mask={mask}"
-        )
-        details = (
-            f"HSQC PMTC-style tracks={len(ts)}; C_tol={c_tol:g}; H_tol={h_tol:g}; "
-            f"C_span<={c_span_tol:g}; H_span<={h_span_tol:g}; min_track_size={min_track_size}; "
-            f"candidate_min_score={candidate_min_score:g}; avg_score={avg_score:.3f}; dominant_mask={mask}"
-        )
-        blocks.append(ClusterBlock(cluster_id=str(cid), kind="HSQC", values=vals, n_tracks=len(ts), presence_mask=mask, details=details))
-    return blocks
-
-# =============================================================================
-# CORD-NMR single-spectrum 13C clustering and full 2D HSQC PMTC/QG-PMTC flow
-# =============================================================================
-
-@dataclass
-class CPeak1D:
-    peak_id: str
-    sample_id: str
-    ppm: float
-    intensity: float = 1.0
-    area: Optional[float] = None
-
-
-def load_c_peaklist(path: str, sample_id: str = "S1") -> List[CPeak1D]:
-    rows = _read_delimited_rows(Path(path))
-    if not rows:
-        return []
-    keys = list(rows[0].keys())
-    c_key = _find_key(keys, [
-        "CPPM", "C_PPM", "C ppm", "c_ppm", "ppm_c", "carbon_ppm", "13c_ppm",
-        "ppm", "shift", "chemical_shift", "position", "delta", "col1",
-    ])
-    i_key = _find_key(keys, ["intensity", "height", "amp", "amplitude", "peak_height", "area", "integral", "volume", "col2"])
-    a_key = _find_key(keys, ["area", "integral", "volume", "col3"])
-    if c_key is None:
-        raise ValueError(f"Cannot find C/CPPM column in {Path(path).name}.")
-    peaks: List[CPeak1D] = []
-    for idx, row in enumerate(rows, 1):
-        c = _safe_float(row.get(c_key))
-        if c is None:
-            continue
-        inten = _safe_float(row.get(i_key)) if i_key else None
-        area = _safe_float(row.get(a_key)) if a_key else None
-        if inten is None and area is not None:
-            inten = area
-        peaks.append(CPeak1D(f"{sample_id}_P{idx:04d}", sample_id, float(c), float(inten if inten is not None else 1.0), area))
-    peaks.sort(key=lambda p: p.ppm)
-    return peaks
-
-
-def _ppm_window_at(ppm: float, region_windows: Sequence[Tuple[float, float, float]]) -> float:
-    for lo, hi, win in region_windows:
-        if lo <= ppm < hi:
-            return float(win)
-    return float(region_windows[-1][2] if region_windows else 0.30)
-
-
 def _dict_track_mask(track: dict, ordered_ids: Sequence[str]) -> str:
     members = track.get("members", {}) or {}
     return "".join("1" if members.get(sid) else "0" for sid in ordered_ids)
@@ -1338,47 +980,8 @@ def run_c_presence_mask_clustering(
             setpacking_model_cost=setpacking_model_cost,
             setpacking_high_mask_bonus=setpacking_high_mask_bonus,
         )
-        normalized_model = normalize_model_key(model or "v5_pmtc")
-        if normalized_model in {
-            "v5",
-            "v5a",
-            "v5_pmtc",
-            "v5_pmtc_r85",
-            "v5_enum",
-            "v5_enumerated",
-            "enumerated_v5",
-            "v4",
-            "v4_baseline",
-            "baseline",
-            "default",
-        }:
-            ordered_ids, _peaks_original, _shifts, tracks, diag = _run_v4_frontend(samples, config)
-            backend_note = model_display_label("v4_baseline")
-        else:
-            from nmr_trendtrack.models import run_switchable_model
-
-            state = run_switchable_model(samples, config)
-            ordered_ids = list(state.ordered_sample_ids)
-            tracks = []
-            for tr in state.tracks:
-                members = {}
-                for sid, peak in tr.members.items():
-                    members[sid] = {
-                        "sample": sid,
-                        "peak_id": peak.peak_id,
-                        "ppm": float(peak.ppm_raw),
-                        "ppm_corr": float(peak.corrected_ppm()),
-                        "intensity": float(peak.intensity if peak.intensity is not None else (peak.area or 1.0)),
-                        "area": float(peak.area if peak.area is not None else peak.intensity),
-                    }
-                tracks.append({
-                    "track_id": tr.track_id,
-                    "member_ids": tuple(sorted(p["peak_id"] for p in members.values())),
-                    "members": members,
-                    "score": float(tr.quality_score),
-                })
-            diag = {"n_candidate_tracks": "", "n_selected_tracks": len(tracks), "source_model": normalized_model}
-            backend_note = model_display_label(normalized_model)
+        ordered_ids, _peaks_original, _shifts, tracks, diag = _run_v4_frontend(samples, config)
+        backend_note = "SPTC"
 
         def _track_center(track: dict) -> float:
             vals = []
@@ -1652,11 +1255,11 @@ def run_c_common_mask_backend_clustering(
 
         normalized_model = normalize_model_key(model or "v5_enum")
         pmtc_labels, pmtc_diag = _pmtc_labels(common_tracks, ordered_ids, config)
-        if normalized_model in {"v5", "v5a", "v5_pmtc", "v5_pmtc_r85", "default"}:
+        if normalized_model == "v5_pmtc":
             labels = pmtc_labels
             backend_note = model_display_label("v5_pmtc")
             backend_diag = dict(pmtc_diag)
-        elif normalized_model in {"v5_enum", "v5_enumerated", "enumerated_v5"}:
+        elif normalized_model == "v5_enum":
             labels, backend_diag = guarded_recall_quality_labels(
                 common_tracks,
                 ordered_ids,
@@ -1730,84 +1333,6 @@ def run_c_common_mask_backend_clustering(
                 w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
                 w.writeheader()
                 w.writerows(rows)
-    return blocks
-
-
-def _split_c_single_segment(segment: List[CPeak1D], max_peaks_per_cluster: int, intensity_split_weight: float) -> List[List[CPeak1D]]:
-    if len(segment) <= max_peaks_per_cluster:
-        return [segment]
-    ordered = sorted(segment, key=lambda p: p.ppm)
-    n_parts = int(math.ceil(len(ordered) / max(1, max_peaks_per_cluster)))
-    logs = [math.log(max(abs(float(p.area if p.area is not None else p.intensity)), 1e-12)) for p in ordered]
-    gaps = []
-    for i in range(len(ordered) - 1):
-        gaps.append(((ordered[i + 1].ppm - ordered[i].ppm) + float(intensity_split_weight) * abs(logs[i + 1] - logs[i]), i))
-    cuts = sorted(i + 1 for _, i in sorted(gaps, reverse=True)[: max(0, n_parts - 1)])
-    out: List[List[CPeak1D]] = []
-    start = 0
-    for cut in cuts + [len(ordered)]:
-        part = ordered[start:cut]
-        start = cut
-        for j in range(0, len(part), max_peaks_per_cluster):
-            chunk = part[j:j + max_peaks_per_cluster]
-            if chunk:
-                out.append(chunk)
-    return out
-
-
-def run_c_single_spectrum_gap_clustering(
-    sample_files: Sequence[str],
-    *,
-    region_windows: Optional[List[Tuple[float, float, float]]] = None,
-    single_gap_factor: float = 1.8,
-    max_peaks_per_cluster: int = 30,
-    min_cluster_size: int = 1,
-    intensity_split_weight: float = 0.10,
-) -> List[ClusterBlock]:
-    """Exploratory 13C single-spectrum grouping integrated into the fourth module.
-
-    This mode is deliberately separate from V5 cross-sample clustering.  With one spectrum
-    there is no co-variation evidence, so the result is an editable C_untyped candidate
-    grouping based on region-aware ppm gaps, cluster-size control, and optional intensity-gap
-    splitting. Each block can still be edited and sent to CORD-NMR C_untyped database analysis.
-    """
-    if not sample_files:
-        raise ValueError("Please select at least one 13C peak-list file.")
-    if single_gap_factor <= 0 or max_peaks_per_cluster <= 0 or min_cluster_size <= 0:
-        raise ValueError("Single-spectrum gap factor, max peaks/cluster and min cluster size must be positive.")
-    regions = region_windows or DEFAULT_REGION_WINDOWS
-    blocks: List[ClusterBlock] = []
-    for si, path in enumerate(sample_files, 1):
-        sid = f"S{si}"
-        peaks = load_c_peaklist(path, sid)
-        if not peaks:
-            continue
-        segments: List[List[CPeak1D]] = []
-        cur = [peaks[0]]
-        for a, b in zip(peaks, peaks[1:]):
-            center = 0.5 * (a.ppm + b.ppm)
-            gate = _ppm_window_at(center, regions) * float(single_gap_factor)
-            if b.ppm - a.ppm > gate:
-                segments.append(cur)
-                cur = [b]
-            else:
-                cur.append(b)
-        segments.append(cur)
-        local_idx = 0
-        for seg in segments:
-            for part in _split_c_single_segment(seg, int(max_peaks_per_cluster), float(intensity_split_weight)):
-                if len(part) < int(min_cluster_size):
-                    continue
-                local_idx += 1
-                vals = [p.ppm for p in part]
-                span = max(vals) - min(vals) if len(vals) > 1 else 0.0
-                details = (
-                    f"Single-spectrum exploratory C cluster; sample={Path(path).name}; peaks={len(part)}; "
-                    f"ppm_span={span:.3f}; gap_factor={single_gap_factor:g}; max_peaks/cluster={max_peaks_per_cluster}"
-                )
-                blocks.append(ClusterBlock(f"{sid}_C{local_idx:02d}", "C", vals, len(part), "single", details))
-    if not blocks:
-        raise ValueError("No single-spectrum C clusters were produced.")
     return blocks
 
 
@@ -2211,37 +1736,6 @@ def build_hsqc_v5_full_tracks(peaks_by_sample, sample_ids, *, c_tol=1.0, h_tol=0
     return selected, shifts, len(cands)
 
 
-def _legacy_hsqc_v5_full_clustering_pmtc_only(sample_files: Sequence[str], *, c_tol: float = 1.0, h_tol: float = 0.1, c_span_tol: float = 1.0, h_span_tol: float = 0.1, min_track_size: int = 2, candidate_min_score: float = 0.40, pair_score_weight: float = 1.20, reciprocal_best_bonus: float = 0.18, top_k_per_seed: int = 6, max_per_sample: int = 3, exact_limit: int = 12, beam_width: int = 120, node_limit: int = 100000, pmtc_max_tracks_by_n_samples: Optional[Dict[int, int]] = None, pmtc_frac_limit_by_n_samples: Optional[Dict[int, float]] = None, pmtc_min_cluster_size: int = 3, correction_options: Optional[dict] = None, output_dir: Optional[str | Path] = None) -> List[ClusterBlock]:
-    if len(sample_files) < 2:
-        raise ValueError("HSQC full 2D clustering needs at least two sample peak-list files.")
-    if min(c_tol, h_tol, c_span_tol, h_span_tol) <= 0:
-        raise ValueError("HSQC C/H tolerance and span tolerances must be positive.")
-    sample_ids = [f"S{i + 1}" for i in range(len(sample_files))]
-    peaks_by_sample = {sid: load_hsqc_peaklist(path, sid) for sid, path in zip(sample_ids, sample_files)}
-    if not any(peaks_by_sample.values()):
-        raise ValueError("No HSQC peaks were read. Use CPPM,HPPM,intensity or c_ppm,h_ppm,intensity.")
-    correction_note = _apply_hsqc_intensity_correction(peaks_by_sample, sample_ids, correction_options, output_dir)
-    tracks, shifts, n_pair = build_hsqc_v5_full_tracks(peaks_by_sample, sample_ids, c_tol=c_tol, h_tol=h_tol, c_span_tol=c_span_tol, h_span_tol=h_span_tol, min_track_size=min_track_size, candidate_min_score=candidate_min_score, pair_score_weight=pair_score_weight, reciprocal_best_bonus=reciprocal_best_bonus, top_k_per_seed=top_k_per_seed, max_per_sample=max_per_sample, exact_limit=exact_limit, beam_width=beam_width, node_limit=node_limit, keep_singletons=True)
-    labels = _pmtc_hsqc_labels(tracks, sample_ids, pmtc_max_tracks_by_n_samples=pmtc_max_tracks_by_n_samples, pmtc_frac_limit_by_n_samples=pmtc_frac_limit_by_n_samples, pmtc_min_cluster_size=pmtc_min_cluster_size)
-    groups: Dict[str, List[HSQCTrack]] = defaultdict(list)
-    for lab, tr in zip(labels, tracks):
-        groups[lab].append(tr)
-    blocks: List[ClusterBlock] = []
-    shift_txt = "; ".join(f"{sid}:ΔC={shifts.get(sid, (0,0))[0]:.3f},ΔH={shifts.get(sid, (0,0))[1]:.3f}" for sid in sample_ids)
-    for cid in sorted(groups, key=lambda x: (x.endswith("unassigned"), x)):
-        ts = groups[cid]
-        vals = [(float(t.center_c), float(t.center_h)) for t in ts]
-        mask_counts: Dict[str, int] = defaultdict(int)
-        for t in ts:
-            mask_counts[_presence_mask_track(t, sample_ids)] += 1
-        mask = max(mask_counts.items(), key=lambda kv: kv[1])[0] if mask_counts else ""
-        avg = sum(t.score for t in ts) / len(ts) if ts else 0.0
-        details = f"HSQC full 2D-V5 tracks={len(ts)}; pair_candidates={n_pair}; C_tol={c_tol:g}; H_tol={h_tol:g}; C_span≤{c_span_tol:g}; H_span≤{h_span_tol:g}; top_k={top_k_per_seed}; max/sample={max_per_sample}; beam={beam_width}; avg_score={avg:.3f}; dominant_mask={mask}; coarse_shift=[{shift_txt}]"
-        details = f"{details}; {correction_note}"
-        blocks.append(ClusterBlock(str(cid), "HSQC", vals, len(ts), mask, details))
-    return blocks
-
-
 def _hsqc_track_to_backend_dict(track: HSQCTrack, sample_ids: Sequence[str]) -> dict:
     members = {}
     member_ids = []
@@ -2297,14 +1791,7 @@ def _hsqc_labels_for_model(
     guarded_quality_max_cluster_rise: Optional[int] = None,
 ) -> Tuple[List[str], Dict[str, object]]:
     normalized_model = normalize_model_key(model or "v5_enum")
-    mask_models = {
-        "v5_frontend_mask",
-        "v5_pmtc_mask",
-        "v5_mask",
-        "v5_enum_mask",
-        "v5_enumerated_mask",
-        "enumerated_v5_mask",
-    }
+    mask_models = {"v5_frontend_mask"}
     if presence_only or normalized_model in mask_models:
         labels = [f"M{_presence_mask_track(track, sample_ids)}" for track in tracks]
         return labels, {
@@ -2327,7 +1814,7 @@ def _hsqc_labels_for_model(
         guarded_quality_max_cluster_rise=guarded_quality_max_cluster_rise,
     )
 
-    if normalized_model in {"v5", "v5a", "v5_pmtc", "v5_pmtc_r85", "default"}:
+    if normalized_model == "v5_pmtc":
         labels = _pmtc_hsqc_labels(
             tracks,
             sample_ids,
@@ -2342,7 +1829,7 @@ def _hsqc_labels_for_model(
         }
 
     backend_tracks = [_hsqc_track_to_backend_dict(track, sample_ids) for track in tracks]
-    if normalized_model in {"v5_enum", "v5_enumerated", "enumerated_v5"}:
+    if normalized_model == "v5_enum":
         from nmr_trendtrack.models.three_model_pipeline import guarded_recall_quality_labels
 
         current_labels = _pmtc_hsqc_labels(
@@ -2368,22 +1855,9 @@ def _hsqc_labels_for_model(
         diag.update({f"guarded_{k}": v for k, v in guarded_diag.items()})
         return labels, diag
 
-    if normalized_model in {"v4", "v4_baseline", "baseline"}:
-        from nmr_trendtrack.models.three_model_pipeline import _v4_modules
-
-        _base, gsp = _v4_modules()
-        labels, v4_diag = gsp.light_joint_cluster(backend_tracks, list(sample_ids), {"mask_weight": 0.38})
-        diag = {
-            "backend": model_display_label("v4_baseline", include_full_name=False),
-            "model": normalized_model,
-            "n_clusters": len(set(labels)),
-        }
-        diag.update({f"v4_{k}": v for k, v in v4_diag.items()})
-        return labels, diag
-
     raise ValueError(
         f"Unsupported HSQC cross-spectrum model: {normalized_model}. "
-        "Use QG-PMTC (v5_enum), PMTC (v5_pmtc), SPTC (v4_baseline), or SP-Mask."
+        "Use QG-PMTC (v5_enum), PMTC (v5_pmtc), or SP-Mask."
     )
 
 
@@ -2533,11 +2007,6 @@ def run_hsqc_cross_clustering(
                 w.writeheader()
                 w.writerows(rows)
     return blocks
-
-
-def run_hsqc_presence_mask_clustering(sample_files: Sequence[str], **kwargs) -> List[ClusterBlock]:
-    kwargs["presence_only"] = True
-    return run_hsqc_cross_clustering(sample_files, **kwargs)
 
 
 def _project_hsqc_track_to_common_mask(
@@ -2764,67 +2233,6 @@ def run_hsqc_common_mask_backend_clustering(
     return blocks
 
 
-def run_hsqc_v5_full_clustering(
-    sample_files: Sequence[str],
-    *,
-    model: str = "v5_pmtc",
-    presence_only: bool = False,
-    c_tol: float = 1.0,
-    h_tol: float = 0.1,
-    c_span_tol: float = 1.0,
-    h_span_tol: float = 0.1,
-    min_track_size: int = 2,
-    candidate_min_score: float = 0.40,
-    pair_score_weight: float = 1.20,
-    reciprocal_best_bonus: float = 0.18,
-    top_k_per_seed: int = 6,
-    max_per_sample: int = 3,
-    exact_limit: int = 12,
-    beam_width: int = 120,
-    node_limit: int = 100000,
-    pmtc_max_tracks_by_n_samples: Optional[Dict[int, int]] = None,
-    pmtc_frac_limit_by_n_samples: Optional[Dict[int, float]] = None,
-    pmtc_min_cluster_size: int = 3,
-    guarded_quality_max_cluster_rise: int = 1,
-    correction_options: Optional[dict] = None,
-    output_dir: Optional[str | Path] = None,
-) -> List[ClusterBlock]:
-    """Compatibility wrapper for the old HSQC V5 entry point.
-
-    The implementation now shares the same model switch as 13C cross-spectrum
-    clustering. The default remains PMTC (internal key v5_pmtc) to preserve existing callers.
-    """
-    return run_hsqc_cross_clustering(
-        sample_files,
-        model=model,
-        presence_only=presence_only,
-        c_tol=c_tol,
-        h_tol=h_tol,
-        c_span_tol=c_span_tol,
-        h_span_tol=h_span_tol,
-        min_track_size=min_track_size,
-        candidate_min_score=candidate_min_score,
-        pair_score_weight=pair_score_weight,
-        reciprocal_best_bonus=reciprocal_best_bonus,
-        top_k_per_seed=top_k_per_seed,
-        max_per_sample=max_per_sample,
-        exact_limit=exact_limit,
-        beam_width=beam_width,
-        node_limit=node_limit,
-        pmtc_max_tracks_by_n_samples=pmtc_max_tracks_by_n_samples,
-        pmtc_frac_limit_by_n_samples=pmtc_frac_limit_by_n_samples,
-        pmtc_min_cluster_size=pmtc_min_cluster_size,
-        guarded_quality_max_cluster_rise=guarded_quality_max_cluster_rise,
-        correction_options=correction_options,
-        output_dir=output_dir,
-    )
-
-
-# Override the earlier compatibility function: GUI code that still calls the old name now gets the full 2D V5 backend.
-def run_hsqc_v5_style_clustering(*args, **kwargs) -> List[ClusterBlock]:
-    return run_hsqc_v5_full_clustering(*args, **kwargs)
-
-# Late helper needed by the appended full 2D HSQC backend.
 def _hsqc_peak_lookup(peaks_by_sample: Dict[str, List[HSQCPeak]]) -> Dict[str, HSQCPeak]:
     return {p.peak_id: p for arr in peaks_by_sample.values() for p in arr}
 

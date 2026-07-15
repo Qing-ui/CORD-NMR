@@ -1045,14 +1045,6 @@ def guarded_recall_quality_labels(
     }
 
 
-def run_v4_baseline(samples: List[Sample], config: AppConfig) -> JointState:
-    base, gsp = _v4_modules()
-    ordered_ids, peaks_original, shifts, selected, diag = _run_v4_frontend(samples, config)
-    labels, cdiag = gsp.light_joint_cluster(selected, ordered_ids, {"mask_weight": 0.38})
-    state = _make_state(samples, ordered_ids, peaks_original, shifts, selected, labels, objective_value=float(cdiag.get("internal_score", 0.0)), iterations=1)
-    return state
-
-
 def run_v5_pmtc(samples: List[Sample], config: AppConfig) -> JointState:
     ordered_ids, peaks_original, shifts, selected, diag = _run_v4_frontend(samples, config)
     labels, cdiag = _pmtc_labels(selected, ordered_ids, config)
@@ -1153,49 +1145,19 @@ def run_guarded_recall_quality(samples: List[Sample], config: AppConfig) -> Join
     return state
 
 
-def run_v5_enum_mask_refined(samples: List[Sample], config: AppConfig) -> JointState:
-    from nmr_trendtrack.models.enumerated_v5 import run_enumerated_v5_mask_pool_direct
-
-    return run_enumerated_v5_mask_pool_direct(samples, config)
-
-
 def run_switchable_model(samples: List[Sample], config: AppConfig) -> JointState:
     """Run the selected cross-spectrum clustering backend.
 
     Supported names:
-      - original_t: TTC, ppm tolerance-driven early trajectory connection
-      - v4_baseline: SPTC, seed-based candidate trajectories with conflict-constrained set-packing
       - v5_pmtc: PMTC, presence-mask binning and intensity-profile bucket splitting
       - v5_enum: QG-PMTC, SPTC front end plus PMTC labels and guarded merge/split refinement
-      - v5_enum_mask: DMP, direct mask-pooling ablation
-      - v5_enum_mask_only_ablation: SP-Mask ablation over the enumerated front end
       - v5_frontend_mask: SP-Mask, SPTC front end grouped only by presence mask
     """
     name = str(getattr(config.model, "name", "v5_pmtc") or "v5_pmtc").lower().replace("-", "_")
-    if name in {"v5", "v5a", "v5_pmtc", "v5_pmtc_r85", "default"}:
+    if name == "v5_pmtc":
         return run_v5_pmtc(samples, config)
-    if name in {"v5_frontend_mask", "v5_pmtc_mask", "v5_mask"}:
+    if name == "v5_frontend_mask":
         return run_v5_frontend_mask_only(samples, config)
-    if name in {"v5_enum", "v5_enumerated", "enumerated_v5"}:
+    if name == "v5_enum":
         return run_guarded_recall_quality(samples, config)
-    if name in {"v5_enum_selected_mask", "v5_enumerated_selected_mask", "enumerated_v5_selected_mask"}:
-        from nmr_trendtrack.models.enumerated_v5 import run_enumerated_v5_selected_mask_only
-
-        return run_enumerated_v5_selected_mask_only(samples, config)
-    if name in {"v5_enum_mask_guarded", "v5_enumerated_mask_guarded", "enumerated_v5_mask_guarded"}:
-        from nmr_trendtrack.models.enumerated_v5 import run_enumerated_v5_mask_guarded
-
-        return run_enumerated_v5_mask_guarded(samples, config)
-    if name in {"v5_enum_mask", "v5_enumerated_mask", "enumerated_v5_mask"}:
-        return run_v5_enum_mask_refined(samples, config)
-    if name in {"v5_enum_mask_only_ablation", "v5_enumerated_mask_only_ablation", "enumerated_v5_mask_only_ablation"}:
-        from nmr_trendtrack.models.enumerated_v5 import run_enumerated_v5_mask_only
-
-        return run_enumerated_v5_mask_only(samples, config)
-    if name in {"v4", "v4_baseline", "baseline"}:
-        return run_v4_baseline(samples, config)
-    if name in {"original", "original_t", "t", "t_mixture"}:
-        from nmr_trendtrack.optimize.joint import run_joint_optimization
-
-        return run_joint_optimization(samples, config)
-    raise ValueError(f"Unsupported clustering model: {name}. Use v5_enum, v5_pmtc, v4_baseline, or original_t.")
+    raise ValueError(f"Unsupported clustering model: {name}. Use v5_enum, v5_pmtc, or v5_frontend_mask.")
