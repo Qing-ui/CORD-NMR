@@ -6,6 +6,15 @@ single-spectrum clustering, NMR prediction, and atom-level assignment.
 
 Current public release: **CORD-NMR 1.0.0**.
 
+The continuous-series implementation in this repository is synchronized with
+the final CORD-NMR resubmission. The adopted benchmark implementation uses the
+strict-contiguous SPTC front end (`gap = 0`), retains up to 20 candidates per
+seed in the benchmark evaluator, and evaluates the global-strict and
+common-mask routes with mask-only, PMTC, and QG-PMTC outputs. The PMTC
+sample-number settings used for the benchmark remain the recorded settings;
+the exploratory uniform-cap, deletion-only, BIC, and permutation variants are
+not part of this repository.
+
 This repository contains the software needed to inspect and reproduce the GUI
 logic. It deliberately does not contain the manuscript, supporting information,
 research datasets, exploratory work, generated results, or user databases.
@@ -73,6 +82,9 @@ scripts/check_publication.py   repository publication guard
 
 See [`docs/PUBLICATION_SCOPE.md`](docs/PUBLICATION_SCOPE.md) for the explicit
 inclusion and exclusion policy.
+
+The final implementation contract is summarized in
+[`docs/FINAL_METHOD_CONTRACT.md`](docs/FINAL_METHOD_CONTRACT.md).
 
 ## Recommended reading
 

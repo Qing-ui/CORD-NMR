@@ -8,7 +8,7 @@ from .contracts import (
     Membership,
     JointState,
 )
-from .config import AppConfig, AlignConfig
+from .config import AppConfig, AlignConfig, TrendConfig, ClusterConfig, OptimizeConfig
 
 __all__ = [
     "Sample",
@@ -21,4 +21,7 @@ __all__ = [
     "JointState",
     "AppConfig",
     "AlignConfig",
+    "TrendConfig",
+    "ClusterConfig",
+    "OptimizeConfig",
 ]

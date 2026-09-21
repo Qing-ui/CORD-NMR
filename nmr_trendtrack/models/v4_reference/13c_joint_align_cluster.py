@@ -769,8 +769,8 @@ def run_scenario(templates, name, combos, outdir, seed=0, cfg=None):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--template-csv', required=True)
-    ap.add_argument('--outdir', default='cord_nmr_output')
+    ap.add_argument('--template-csv', default='standard_templates.csv')
+    ap.add_argument('--outdir', default='final_joint_algorithm_3_5_samples')
     ap.add_argument('--seed', type=int, default=20260426)
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
