@@ -13,8 +13,10 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$releaseTag = "v1.0.0"
-$assetBaseUrl = "https://github.com/Qing-ui/CORD-NMR/releases/download/$releaseTag"
+# The application package is versioned independently from the large, immutable
+# prediction assets retained in the v1.0.0 release.
+$modelAssetReleaseTag = "v1.0.0"
+$assetBaseUrl = "https://github.com/Qing-ui/CORD-NMR/releases/download/$modelAssetReleaseTag"
 $uniCoreRevision = "ace6fae1c8479a9751f2bb1e1d6e4047427bc134"
 $micromambaVersion = "2.8.1-0"
 

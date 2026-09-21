@@ -4,7 +4,7 @@ CORD-NMR is a Windows desktop application for natural-product NMR workflows.
 The GUI combines carbon and HSQC dereplication, continuous-series and
 single-spectrum clustering, NMR prediction, and atom-level assignment.
 
-Current public release: **CORD-NMR 1.0.0**.
+Current public release: **CORD-NMR 1.0.1**.
 
 The continuous-series implementation in this repository is synchronized with
 the final CORD-NMR resubmission. The adopted benchmark implementation uses the
