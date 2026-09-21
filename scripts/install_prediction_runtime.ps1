@@ -307,7 +307,7 @@ $runtimePaths | ConvertTo-Json | Set-Content -LiteralPath $runtimePathsFile -Enc
 
 $state = [ordered]@{
     installed_at = (Get-Date).ToString("o")
-    release_tag = $releaseTag
+    model_asset_release_tag = $modelAssetReleaseTag
     runtime_root = $RuntimeRoot
     environment_root = $EnvironmentRoot
     application = [bool]$applicationPython
