@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-RELEASE_VERSION = "1.0.0"
+RELEASE_VERSION = "1.0.2"
 ARCHIVE_PREFIX = f"CORD-NMR-v{RELEASE_VERSION}"
 ROOT_RUNTIME_FILES = {
     "Install-CORD-NMR.bat",

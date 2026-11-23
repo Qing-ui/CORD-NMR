@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Dict, List, Optional
 
 
@@ -128,24 +129,32 @@ def annotate_prediction_sdf(path: str | Path) -> SDFAnnotationResult:
     from rdkit import Chem
     from rdkit.Chem import Descriptors
 
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
-    molecules = [Chem.Mol(mol) for mol in supplier if mol is not None]
-    del supplier
-    if not molecules:
-        raise ValueError(f"No valid molecules found in predicted SDF: {sdf_path}")
-
-    suffix = "".join(sdf_path.suffixes) or ".sdf"
-    tmp_path = sdf_path.with_name(f"{sdf_path.stem}.annotating{suffix}")
-    writer = Chem.SDWriter(str(tmp_path))
+    tmp_path = None
+    count = 0
     try:
-        for index, mol in enumerate(molecules, start=1):
-            mol.SetProp("ID", str(index))
-            mol.SetProp("FW", f"{Descriptors.MolWt(mol):.4f}")
-            writer.write(mol)
+        with sdf_path.open("rb") as source, NamedTemporaryFile(
+            mode="wt", encoding="utf-8", newline="\n", suffix=".sdf", dir=sdf_path.parent, delete=False,
+        ) as target:
+            tmp_path = Path(target.name)
+            supplier = Chem.ForwardSDMolSupplier(source, removeHs=False)
+            writer = Chem.SDWriter(target.file)
+            try:
+                for mol in supplier:
+                    if mol is None:
+                        continue
+                    count += 1
+                    mol.SetProp("ID", str(count))
+                    mol.SetProp("FW", f"{Descriptors.MolWt(mol):.4f}")
+                    writer.write(mol)
+            finally:
+                writer.close()
+        if not count:
+            raise ValueError(f"No valid molecules found in predicted SDF: {sdf_path}")
+        tmp_path.replace(sdf_path)
     finally:
-        writer.close()
-    tmp_path.replace(sdf_path)
-    return SDFAnnotationResult(path=sdf_path, molecule_count=len(molecules))
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+    return SDFAnnotationResult(path=sdf_path, molecule_count=count)
 
 
 def build_nmr_prediction_launch(

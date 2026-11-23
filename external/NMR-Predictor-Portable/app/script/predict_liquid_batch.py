@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from rdkit import Chem
+from sdf_io import iter_sdf, sdf_writer
 from rdkit.Chem import AllChem
 from torch.utils.data import DataLoader, Dataset
 
@@ -98,7 +99,7 @@ def load_csv_molecules(csv_path: Path, smiles_column: str, id_column: str | None
 
 
 def load_sdf_molecules(sdf_path: Path) -> list[tuple[str, Chem.Mol, str | None]]:
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
+    supplier = iter_sdf(sdf_path)
     molecules: list[tuple[str, Chem.Mol, str | None]] = []
     for index, mol in enumerate(supplier):
         if mol is None:
@@ -665,12 +666,12 @@ def load_input_records(args) -> tuple[list[tuple[str, Chem.Mol, str | None]], st
 
 
 def count_valid_sdf_records(sdf_path: Path) -> int:
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
+    supplier = iter_sdf(sdf_path)
     return sum(1 for mol in supplier if mol is not None)
 
 
 def iter_prepared_cache_chunks(sdf_path: Path, chunk_size: int):
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
+    supplier = iter_sdf(sdf_path)
     chunk: list[PreparedMolecule] = []
     for mol in supplier:
         if mol is None:
@@ -813,9 +814,8 @@ def write_final_sdfs(prepared: list[PreparedMolecule], result: pd.DataFrame, out
         group = result[result["molecule_id"] == sample.molecule_id].copy()
         sdf_props = build_sdf_prediction_properties(sample, group)
         apply_properties_to_mol(mol, sample, sdf_props)
-        writer = Chem.SDWriter(str(out_path))
-        writer.write(mol)
-        writer.close()
+        with sdf_writer(out_path) as writer:
+            writer.write(mol)
 
 
 def append_annotated_combined_sdf(prepared: list[PreparedMolecule], result: pd.DataFrame, writer) -> None:
@@ -830,9 +830,8 @@ def append_annotated_combined_sdf(prepared: list[PreparedMolecule], result: pd.D
 def write_annotated_combined_sdf(prepared: list[PreparedMolecule], result: pd.DataFrame, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / "annotated_predictions.sdf"
-    writer = Chem.SDWriter(str(out_path))
-    append_annotated_combined_sdf(prepared, result, writer)
-    writer.close()
+    with sdf_writer(out_path) as writer:
+        append_annotated_combined_sdf(prepared, result, writer)
 
 
 def write_per_structure_csvs(result: pd.DataFrame, output_dir: Path) -> None:
@@ -917,122 +916,120 @@ def main():
         args.max_iters = get_default_max_iters(args.opt_level)
     nuclei = ["H", "C"] if args.nucleus == "both" else [args.nucleus]
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    combined_writer = Chem.SDWriter(str(args.output_dir / "annotated_predictions.sdf"))
-    combined_csv_path = args.output_dir / "all_predictions.csv"
-    if args.write_combined and combined_csv_path.exists():
-        combined_csv_path.unlink()
+    with sdf_writer(args.output_dir / "annotated_predictions.sdf") as combined_writer:
+        combined_csv_path = args.output_dir / "all_predictions.csv"
+        if args.write_combined and combined_csv_path.exists():
+            combined_csv_path.unlink()
 
-    if args.prepared_cache_sdf is not None:
-        total_count = count_valid_sdf_records(args.prepared_cache_sdf)
-        prepared_chunks = iter_prepared_cache_chunks(args.prepared_cache_sdf, args.flush_every)
-        source = "prepared_cache"
-    else:
-        raw, source = load_input_records(args)
-        total_count = len(raw)
-        prepared_chunks = None
-    print(f"loaded records: {total_count}", flush=True)
+        if args.prepared_cache_sdf is not None:
+            total_count = count_valid_sdf_records(args.prepared_cache_sdf)
+            prepared_chunks = iter_prepared_cache_chunks(args.prepared_cache_sdf, args.flush_every)
+            source = "prepared_cache"
+        else:
+            raw, source = load_input_records(args)
+            total_count = len(raw)
+            prepared_chunks = None
+        print(f"loaded records: {total_count}", flush=True)
 
-    if prepared_chunks is not None:
-        chunk_start = 0
-        for prepared in prepared_chunks:
-            chunk_end = min(chunk_start + len(prepared), total_count)
-            print(f"processing chunk {chunk_start + 1}-{chunk_end}/{total_count}", flush=True)
-            failed_rows: list[str] = []
-            outputs: list[pd.DataFrame] = []
-            for nucleus in nuclei:
-                if nucleus == "H":
-                    outputs.append(
-                        run_single_nucleus_prediction(
-                            prepared_samples=prepared,
-                            nucleus="H",
-                            model_path=args.h_model_path,
-                            dict_path=args.dict_path,
-                            scaler_dir=args.h_scaler_dir,
+        if prepared_chunks is not None:
+            chunk_start = 0
+            for prepared in prepared_chunks:
+                chunk_end = min(chunk_start + len(prepared), total_count)
+                print(f"processing chunk {chunk_start + 1}-{chunk_end}/{total_count}", flush=True)
+                failed_rows: list[str] = []
+                outputs: list[pd.DataFrame] = []
+                for nucleus in nuclei:
+                    if nucleus == "H":
+                        outputs.append(
+                            run_single_nucleus_prediction(
+                                prepared_samples=prepared,
+                                nucleus="H",
+                                model_path=args.h_model_path,
+                                dict_path=args.dict_path,
+                                scaler_dir=args.h_scaler_dir,
+                            )
                         )
-                    )
-                else:
-                    outputs.append(
-                        run_single_nucleus_prediction(
-                            prepared_samples=prepared,
-                            nucleus="C",
-                            model_path=args.c_model_path,
-                            dict_path=args.dict_path,
-                            scaler_dir=args.c_scaler_dir,
+                    else:
+                        outputs.append(
+                            run_single_nucleus_prediction(
+                                prepared_samples=prepared,
+                                nucleus="C",
+                                model_path=args.c_model_path,
+                                dict_path=args.dict_path,
+                                scaler_dir=args.c_scaler_dir,
+                            )
                         )
+                result = pd.concat(outputs, ignore_index=True) if outputs else pd.DataFrame()
+                write_final_sdfs(prepared, result, args.output_dir)
+                append_annotated_combined_sdf(prepared, result, combined_writer)
+                write_per_structure_csvs(result, args.output_dir)
+                if args.write_combined:
+                    result.to_csv(
+                        combined_csv_path,
+                        mode="a",
+                        header=not combined_csv_path.exists(),
+                        index=False,
+                        encoding="utf-8-sig",
                     )
-            result = pd.concat(outputs, ignore_index=True) if outputs else pd.DataFrame()
-            write_final_sdfs(prepared, result, args.output_dir)
-            append_annotated_combined_sdf(prepared, result, combined_writer)
-            write_per_structure_csvs(result, args.output_dir)
-            if args.write_combined:
-                result.to_csv(
-                    combined_csv_path,
-                    mode="a",
-                    header=not combined_csv_path.exists(),
-                    index=False,
-                    encoding="utf-8-sig",
+                append_failed_rows(failed_rows, args.output_dir)
+                del outputs
+                del result
+                del prepared
+                gc.collect()
+                chunk_start = chunk_end
+        else:
+            for chunk_start in range(0, total_count, args.flush_every):
+                chunk_end = min(chunk_start + args.flush_every, total_count)
+                print(f"processing chunk {chunk_start + 1}-{chunk_end}/{total_count}", flush=True)
+                prepared, failed_rows = prepare_input_molecules(
+                    raw[chunk_start:chunk_end],
+                    source=source,
+                    args=args,
+                    start_index=chunk_start,
+                    total_count=total_count,
                 )
-            append_failed_rows(failed_rows, args.output_dir)
-            del outputs
-            del result
-            del prepared
-            gc.collect()
-            chunk_start = chunk_end
-    else:
-        for chunk_start in range(0, total_count, args.flush_every):
-            chunk_end = min(chunk_start + args.flush_every, total_count)
-            print(f"processing chunk {chunk_start + 1}-{chunk_end}/{total_count}", flush=True)
-            prepared, failed_rows = prepare_input_molecules(
-                raw[chunk_start:chunk_end],
-                source=source,
-                args=args,
-                start_index=chunk_start,
-                total_count=total_count,
-            )
-            outputs: list[pd.DataFrame] = []
-            for nucleus in nuclei:
-                if nucleus == "H":
-                    outputs.append(
-                        run_single_nucleus_prediction(
-                            prepared_samples=prepared,
-                            nucleus="H",
-                            model_path=args.h_model_path,
-                            dict_path=args.dict_path,
-                            scaler_dir=args.h_scaler_dir,
+                outputs: list[pd.DataFrame] = []
+                for nucleus in nuclei:
+                    if nucleus == "H":
+                        outputs.append(
+                            run_single_nucleus_prediction(
+                                prepared_samples=prepared,
+                                nucleus="H",
+                                model_path=args.h_model_path,
+                                dict_path=args.dict_path,
+                                scaler_dir=args.h_scaler_dir,
+                            )
                         )
-                    )
-                else:
-                    outputs.append(
-                        run_single_nucleus_prediction(
-                            prepared_samples=prepared,
-                            nucleus="C",
-                            model_path=args.c_model_path,
-                            dict_path=args.dict_path,
-                            scaler_dir=args.c_scaler_dir,
+                    else:
+                        outputs.append(
+                            run_single_nucleus_prediction(
+                                prepared_samples=prepared,
+                                nucleus="C",
+                                model_path=args.c_model_path,
+                                dict_path=args.dict_path,
+                                scaler_dir=args.c_scaler_dir,
+                            )
                         )
+
+                result = pd.concat(outputs, ignore_index=True) if outputs else pd.DataFrame()
+                write_final_sdfs(prepared, result, args.output_dir)
+                append_annotated_combined_sdf(prepared, result, combined_writer)
+                write_per_structure_csvs(result, args.output_dir)
+                if args.write_combined:
+                    result.to_csv(
+                        combined_csv_path,
+                        mode="a",
+                        header=not combined_csv_path.exists(),
+                        index=False,
+                        encoding="utf-8-sig",
                     )
-
-            result = pd.concat(outputs, ignore_index=True) if outputs else pd.DataFrame()
-            write_final_sdfs(prepared, result, args.output_dir)
-            append_annotated_combined_sdf(prepared, result, combined_writer)
-            write_per_structure_csvs(result, args.output_dir)
-            if args.write_combined:
-                result.to_csv(
-                    combined_csv_path,
-                    mode="a",
-                    header=not combined_csv_path.exists(),
-                    index=False,
-                    encoding="utf-8-sig",
-                )
-            append_failed_rows(failed_rows, args.output_dir)
-            del outputs
-            del result
-            del prepared
+                append_failed_rows(failed_rows, args.output_dir)
+                del outputs
+                del result
+                del prepared
+                gc.collect()
+            del raw
             gc.collect()
-        del raw
-        gc.collect()
-
-    combined_writer.close()
     print(f"saved dir: {args.output_dir}")
     print(f"saved combined sdf: {args.output_dir / 'annotated_predictions.sdf'}")
 

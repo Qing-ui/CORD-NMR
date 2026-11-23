@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +61,7 @@ from recqc_cluster import (
     model_display_label,
     model_key_from_display,
 )
+from services.continuous_sample_correction import ContinuousCorrectionOptions
 from services.nmr_prediction_bridge import (
     DEFAULT_NMR_PREDICTOR_ROOT,
     annotate_prediction_sdf,
@@ -2223,10 +2225,12 @@ class ClusterModeFrame(ttk.Frame):
         return region_windows, pmtc_max_tracks, pmtc_frac
 
     def _correction_options(self):
+        if not self.correction_enabled.get():
+            return asdict(ContinuousCorrectionOptions())
         clip_text = self.correction_delta_clip.get().strip()
         delta_clip = None if clip_text.lower() in {"", "none", "null", "off"} else float(clip_text)
         return {
-            "enabled": bool(self.correction_enabled.get()),
+            "enabled": True,
             "use_type": bool(self.correction_use_type.get()),
             "use_area": bool(self.correction_use_area.get()),
             "calibration_mode": self.correction_mode.get(),
@@ -2266,6 +2270,7 @@ class ClusterModeFrame(ttk.Frame):
                     exact_limit=int(self.exact_limit.get()),
                     beam_width=int(self.beam_width.get()),
                     node_limit=int(self.node_limit.get()),
+                    min_output_tracks=1,
                     setpacking_high_mask_bonus=self._setpacking_high_mask_bonus(),
                     correction_options=correction_options,
                     output_dir=run_dir,

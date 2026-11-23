@@ -164,7 +164,7 @@ def maybe_prepare_corrected_samples(
         "enabled": True,
         "n_samples": len(out_samples),
         "n_rows": int(len(train_df)),
-        "calibration_mode": mode,
+        "calibration_mode": str(model["calibration_mode"]),
         "used_area": bool(model.get("used_area", False)),
         "used_type": bool(model.get("used_type", False)),
         "target_source": str(model.get("target_source", "")),

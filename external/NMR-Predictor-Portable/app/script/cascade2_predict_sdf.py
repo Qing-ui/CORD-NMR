@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from rdkit import Chem
+from sdf_io import iter_sdf, sdf_writer
 
 from shared_rdkit_prep import (
     PreparedMolecule,
@@ -60,6 +61,11 @@ def main():
     parser.add_argument("--route-fine-steps", type=int, default=300)
     parser.add_argument("--prepared-cache-sdf", type=Path, default=None)
     args = parser.parse_args()
+    args.input = args.input.resolve()
+    args.output_dir = args.output_dir.resolve()
+    if args.prepared_cache_sdf is not None:
+        args.prepared_cache_sdf = args.prepared_cache_sdf.resolve()
+    args.model_dir = args.model_dir.resolve()
     if args.max_iters is None:
         args.max_iters = get_default_max_iters(args.opt_level)
     args.max_conformers = max(1, min(9, int(args.max_conformers)))
@@ -90,7 +96,7 @@ def main():
         input_data = pickle.load(handle)
     preprocessor = input_data["preprocessor"]
     model = make_model()
-    model.load_weights(args.model_dir / "best_model_val_mae.h5")
+    model.load_weights("best_model_val_mae.h5")
 
     class RBFSequence(GraphSequence):
         def process_data(self, batch_data):
@@ -107,7 +113,7 @@ def main():
     prepared = []
     failures = []
     if args.prepared_cache_sdf is not None:
-        supplier = Chem.SDMolSupplier(str(args.prepared_cache_sdf), removeHs=False)
+        supplier = iter_sdf(args.prepared_cache_sdf)
         cache_count = 0
         for index, mol in enumerate(supplier):
             if mol is None:
@@ -189,17 +195,16 @@ def main():
     result = pd.DataFrame(rows)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     result.to_csv(args.output_dir / "cascade2_13c_predictions.csv", index=False, encoding="utf-8-sig")
-    writer = Chem.SDWriter(str(args.output_dir / "cascade2_annotated_predictions.sdf"))
-    for molecule_id, prepared_mol in prepared:
-        group = result[result["molecule_id"] == molecule_id].sort_values("atom_index")
-        lines = []
-        for serial, row in enumerate(group.itertuples(index=False)):
-            lines.append(f"{serial}[{int(row.atom_index) + 1}]\t{float(row.cascade2_13c_shift_ppm):.2f}")
-        out_mol = Chem.Mol(prepared_mol.mol)
-        out_mol.SetProp("_Name", molecule_id)
-        out_mol.SetProp("CASCADE2 Predicted 13C shifts", "\n".join(lines))
-        writer.write(out_mol)
-    writer.close()
+    with sdf_writer(args.output_dir / "cascade2_annotated_predictions.sdf") as writer:
+        for molecule_id, prepared_mol in prepared:
+            group = result[result["molecule_id"] == molecule_id].sort_values("atom_index")
+            lines = []
+            for serial, row in enumerate(group.itertuples(index=False)):
+                lines.append(f"{serial}[{int(row.atom_index) + 1}]\t{float(row.cascade2_13c_shift_ppm):.2f}")
+            out_mol = Chem.Mol(prepared_mol.mol)
+            out_mol.SetProp("_Name", molecule_id)
+            out_mol.SetProp("CASCADE2 Predicted 13C shifts", "\n".join(lines))
+            writer.write(out_mol)
     del prepared
     gc.collect()
     if failures:

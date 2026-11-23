@@ -35,6 +35,7 @@ from statistics import median
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from services.continuous_sample_correction import maybe_prepare_corrected_samples
+from single_spectrum.adapters import COLUMN_ALIASES
 from single_spectrum.pipeline import (
     SingleSpectrumCalibrationConfig,
     SingleSpectrumGMMConfig,
@@ -148,6 +149,8 @@ class HSQCPeak:
     h_ppm: float
     intensity: float = 1.0
     area: Optional[float] = None
+    width: Optional[float] = None
+    peak_type: Optional[str] = None
 
 
 @dataclass
@@ -243,12 +246,14 @@ def _normalize_col(name: str) -> str:
     return s
 
 
-def _find_key(keys: Sequence[str], candidates: Sequence[str]) -> Optional[str]:
+def _find_key(keys: Sequence[str], candidates: Sequence[str], *, exact: bool = False) -> Optional[str]:
     norm = {_normalize_col(k): k for k in keys}
     for cand in candidates:
         cand_n = _normalize_col(cand)
         if cand_n in norm:
             return norm[cand_n]
+    if exact:
+        return None
     # also allow loose contains matching for exported tables such as "C ppm".
     for cand in candidates:
         cand_n = _normalize_col(cand)
@@ -268,18 +273,17 @@ def _read_delimited_rows(path: Path) -> List[dict]:
     if not lines:
         return []
 
-    first_tokens = _tokenize_line(lines[0])
-    first_has_header = any(re.search(r"[A-Za-zΑ-ωµμδ]|ppm|int|height|area|cppm|hppm", tok, re.I) for tok in first_tokens)
+    delimiter = next((sep for sep in ("\t", ",", ";") if sep in lines[0]), None)
+    split_rows = csv.reader(lines, delimiter=delimiter, skipinitialspace=True) if delimiter else map(_tokenize_line, lines)
+    first_tokens = [token.strip() for token in next(split_rows)]
+    first_has_header = any(tok and _safe_float(tok) is None for tok in first_tokens)
 
     if first_has_header:
-        header = first_tokens
-        rows: List[dict] = []
-        for ln in lines[1:]:
-            toks = _tokenize_line(ln)
-            if not toks:
-                continue
-            rows.append({header[i]: toks[i] for i in range(min(len(header), len(toks)))})
-        return rows
+        return [
+            {key: tok.strip() for key, tok in zip(first_tokens, tokens)}
+            for tokens in split_rows
+            if tokens
+        ]
 
     # no header: expose positional columns col1, col2, col3 ...
     rows = []
@@ -294,21 +298,28 @@ def _read_delimited_rows(path: Path) -> List[dict]:
     return rows
 
 
-def _normalized_c_peaklist(path: str, out_path: Path) -> None:
+def _normalized_c_peaklist(path: str, out_path: Path, *, for_correction: bool = False) -> None:
     rows = _read_delimited_rows(Path(path))
     if not rows:
         raise ValueError(f"No peaks were read from {Path(path).name}")
-    keys = list(rows[0].keys())
+    keys = list(dict.fromkeys(key for row in rows for key in row))
     c_key = _find_key(keys, [
         "CPPM", "C_PPM", "C ppm", "c_ppm", "ppm_c", "carbon_ppm", "carbon", "13c", "13c_ppm",
         "ppm", "shift", "chemical_shift", "position", "delta", "col1",
     ])
     i_key = _find_key(keys, ["intensity", "height", "amp", "amplitude", "peak_height", "area", "integral", "volume", "col2"])
     a_key = _find_key(keys, ["area", "integral", "volume", "col3"])
+    width_key = _find_key(keys, [*COLUMN_ALIASES["width"], "col4"], exact=True)
+    type_key = _find_key(keys, COLUMN_ALIASES["type"], exact=True)
+    if for_correction:
+        a_key = _find_key(keys, ["area", "integral", "volume", "col3"], exact=True)
     if c_key is None:
         raise ValueError(f"Cannot find C/CPPM column in {Path(path).name}.")
     with out_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["ppm", "intensity", "area"])
+        columns = ["ppm", "intensity", "area"]
+        if for_correction:
+            columns.extend(["width", "type"])
+        w = csv.DictWriter(f, fieldnames=columns)
         w.writeheader()
         for row in rows:
             c = _safe_float(row.get(c_key))
@@ -318,9 +329,23 @@ def _normalized_c_peaklist(path: str, out_path: Path) -> None:
             area = _safe_float(row.get(a_key)) if a_key else None
             if inten is None and area is not None:
                 inten = area
-            if area is None and inten is not None:
+            if inten is None:
+                inten = 1.0
+            if area is None and not for_correction:
                 area = inten
-            w.writerow({"ppm": c, "intensity": inten if inten is not None else 1.0, "area": area if area is not None else (inten if inten is not None else 1.0)})
+            peak = {"ppm": c, "intensity": inten, "area": area}
+            if for_correction:
+                peak.update(width=_safe_float(row.get(width_key)), type=row.get(type_key))
+            w.writerow(peak)
+
+
+def _correction_details(result) -> str:
+    meta = result.metadata or {}
+    return (
+        f"correction=on; mode={meta.get('calibration_mode', '')}; "
+        f"used_area={meta.get('used_area', False)}; used_type={meta.get('used_type', False)}; "
+        f"model={result.model_path}"
+    )
 
 
 # ----------------------------- 13C / bundled V5 backend -----------------------------
@@ -403,7 +428,7 @@ def run_c_v5_clustering(
         norm_files: List[Path] = []
         for i, path in enumerate(sample_files, 1):
             out = tmpdir / f"S{i}.csv"
-            _normalized_c_peaklist(path, out)
+            _normalized_c_peaklist(path, out, for_correction=bool(correction_options and correction_options.get("enabled")))
             norm_files.append(out)
 
         samples = [
@@ -435,11 +460,7 @@ def run_c_v5_clustering(
                 )
                 for i, row in enumerate(correction_result.samples)
             ]
-            meta = correction_result.metadata or {}
-            correction_note = (
-                f"correction=on; mode={meta.get('calibration_mode', '')}; "
-                f"model={correction_result.model_path}"
-            )
+            correction_note = _correction_details(correction_result)
         config = _build_v5_config(
             model=model,
             region_windows=region_windows,
@@ -509,7 +530,7 @@ def load_hsqc_peaklist(path: str, sample_id: str) -> List[HSQCPeak]:
     rows = _read_delimited_rows(p)
     if not rows:
         return []
-    keys = list(rows[0].keys())
+    keys = list(dict.fromkeys(key for row in rows for key in row))
     c_key = _find_key(keys, [
         "CPPM", "C_PPM", "C ppm", "c_ppm", "ppm_c", "cshift", "c_shift", "carbon", "carbon_ppm",
         "13c", "13c_ppm", "f1ppm", "f1", "x", "c", "col1",
@@ -519,7 +540,9 @@ def load_hsqc_peaklist(path: str, sample_id: str) -> List[HSQCPeak]:
         "1h", "1h_ppm", "f2ppm", "f2", "y", "h", "col2",
     ])
     i_key = _find_key(keys, ["intensity", "height", "amp", "amplitude", "peak_height", "area", "integral", "volume", "col3"])
-    a_key = _find_key(keys, ["area", "integral", "volume", "col4"])
+    a_key = _find_key(keys, ["area", "integral", "volume", "col4"], exact=True)
+    width_key = _find_key(keys, [*COLUMN_ALIASES["width"], "col5"], exact=True)
+    type_key = _find_key(keys, COLUMN_ALIASES["type"], exact=True)
     if c_key is None or h_key is None:
         raise ValueError(
             f"Cannot find HSQC C/H columns in {p.name}. Use CPPM,HPPM,intensity or c_ppm,h_ppm,intensity."
@@ -543,6 +566,8 @@ def load_hsqc_peaklist(path: str, sample_id: str) -> List[HSQCPeak]:
                 h_ppm=float(h),
                 intensity=float(inten if inten is not None else 1.0),
                 area=float(area) if area is not None else None,
+                width=_safe_float(row.get(width_key)),
+                peak_type=row.get(type_key),
             )
         )
     peaks.sort(key=lambda x: (x.c_ppm, x.h_ppm))
@@ -573,14 +598,15 @@ def _apply_hsqc_intensity_correction(
     for i, sid in enumerate(sample_ids):
         path = input_root / f"{sid}.csv"
         with path.open("w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["ppm", "intensity", "area", "width_hz"])
+            w = csv.DictWriter(f, fieldnames=["ppm", "intensity", "area", "width", "type"])
             w.writeheader()
             for peak in peaks_by_sample.get(sid, []):
                 w.writerow({
                     "ppm": peak.c_ppm,
-                    "intensity": _hsqc_signal_value(peak),
-                    "area": "" if peak.area is None else peak.area,
-                    "width_hz": 1.0,
+                    "intensity": abs(_hsqc_signal_value(peak)),
+                    "area": None if peak.area is None else abs(peak.area),
+                    "width": peak.width,
+                    "type": peak.peak_type,
                 })
         samples.append({"sample_id": sid, "order_index": i, "source_type": "peaklist", "peaklist_path": str(path)})
 
@@ -593,13 +619,9 @@ def _apply_hsqc_intensity_correction(
             if corrected is not None:
                 setattr(peak, "intensity_raw", peak.intensity)
                 setattr(peak, "correction_delta", _safe_float(row.get("delta")))
-                peak.intensity = float(corrected)
+                peak.intensity = math.copysign(corrected, peak.intensity)
 
-    meta = result.metadata or {}
-    return (
-        f"correction=on; mode={meta.get('calibration_mode', '')}; "
-        f"used_area={meta.get('used_area', '')}; model={result.model_path}"
-    )
+    return _correction_details(result)
 
 
 def _hsqc_dist(a: HSQCPeak, b: HSQCPeak, c_tol: float, h_tol: float) -> float:
@@ -1300,7 +1322,7 @@ def run_c_presence_mask_clustering(
         norm_files: List[Path] = []
         for i, path in enumerate(sample_files, 1):
             out = tmpdir / f"S{i}.csv"
-            _normalized_c_peaklist(path, out)
+            _normalized_c_peaklist(path, out, for_correction=bool(correction_options and correction_options.get("enabled")))
             norm_files.append(out)
 
         samples = [
@@ -1332,11 +1354,7 @@ def run_c_presence_mask_clustering(
                 )
                 for i, row in enumerate(correction_result.samples)
             ]
-            meta = correction_result.metadata or {}
-            correction_note = (
-                f"correction=on; mode={meta.get('calibration_mode', '')}; "
-                f"model={correction_result.model_path}"
-            )
+            correction_note = _correction_details(correction_result)
 
         config = _build_v5_config(
             model=model,
@@ -1516,7 +1534,7 @@ def run_c_common_mask_backend_clustering(
         norm_files: List[Path] = []
         for i, path in enumerate(sample_files, 1):
             out = tmpdir / f"S{i}.csv"
-            _normalized_c_peaklist(path, out)
+            _normalized_c_peaklist(path, out, for_correction=bool(correction_options and correction_options.get("enabled")))
             norm_files.append(out)
 
         samples = [
@@ -1548,11 +1566,7 @@ def run_c_common_mask_backend_clustering(
                 )
                 for i, row in enumerate(correction_result.samples)
             ]
-            meta = correction_result.metadata or {}
-            correction_note = (
-                f"correction=on; mode={meta.get('calibration_mode', '')}; "
-                f"model={correction_result.model_path}"
-            )
+            correction_note = _correction_details(correction_result)
 
         config = _build_v5_config(
             model=model,
@@ -1832,7 +1846,10 @@ def run_c_single_spectrum_clustering(
             result = run_single_spectrum_pipeline(in_path, out_dir=out, config=cfg)
             clusters_df = result["clusters"]
             summary = result["summary"]
-            correction_text = f"correction=on; model={summary.get('calibration_model_path')}"
+            correction_text = (
+                f"correction=on; used_area={summary['used_area']}; used_type={summary['used_type']}; "
+                f"model={summary['calibration_model_path']}"
+            )
         else:
             result = run_single_spectrum_gmm(
                 in_path,

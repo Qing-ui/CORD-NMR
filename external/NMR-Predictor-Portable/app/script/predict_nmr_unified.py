@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 from rdkit import Chem
+from sdf_io import iter_sdf, sdf_writer
 from rdkit.Chem import Descriptors
 
 import shared_rdkit_prep as prep
@@ -132,12 +133,12 @@ def run_cascade2(args, output_dir: Path) -> Path:
 
 
 def count_valid_sdf_records(sdf_path: Path) -> int:
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
+    supplier = iter_sdf(sdf_path)
     return sum(1 for mol in supplier if mol is not None)
 
 
 def iter_sdf_records(sdf_path: Path):
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
+    supplier = iter_sdf(sdf_path)
     base_name = sdf_path.stem
     valid_index = 0
     for index, mol in enumerate(supplier):
@@ -169,10 +170,9 @@ def build_prepared_cache(args, cache_path: Path) -> Path:
         raw_iter = iter_sdf_records(args.input)
     print(f"building shared 3D cache: {cache_path}", flush=True)
     print(f"loaded records for cache: {total_count}", flush=True)
-    writer = Chem.SDWriter(str(cache_path))
     written = 0
     chunk_written = 0
-    try:
+    with sdf_writer(cache_path) as writer:
         for index, molecule_id, mol, smiles in raw_iter:
             current_index = index + 1
             if chunk_written == 0:
@@ -210,11 +210,9 @@ def build_prepared_cache(args, cache_path: Path) -> Path:
                 chunk_written = 0
                 gc.collect()
         gc.collect()
-    finally:
-        writer.close()
-        if args.input_type == "csv":
-            del raw
-        gc.collect()
+    if args.input_type == "csv":
+        del raw
+    gc.collect()
     if failed_rows:
         failed_path = args.output_dir / "prepared_cache_failed.tsv"
         with failed_path.open("w", encoding="utf-8") as handle:
@@ -227,7 +225,7 @@ def build_prepared_cache(args, cache_path: Path) -> Path:
 
 def load_sdf_map(path: Path) -> dict[str, MergeSample]:
     samples: dict[str, MergeSample] = {}
-    supplier = Chem.SDMolSupplier(str(path), removeHs=False)
+    supplier = iter_sdf(path)
     for mol in supplier:
         if mol is None:
             continue
@@ -304,28 +302,26 @@ def build_properties(sample: MergeSample, group: pd.DataFrame, mode: str) -> dic
 
 def write_outputs(base_samples: dict[str, MergeSample], merged_df: pd.DataFrame, output_dir: Path, mode: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    combined_writer = Chem.SDWriter(str(output_dir / "annotated_predictions.sdf"))
-    for output_index, (molecule_id, sample) in enumerate(base_samples.items(), start=1):
-        group = merged_df[merged_df["molecule_id"] == molecule_id].copy()
-        props = build_properties(sample, group, mode)
-        out_mol = Chem.Mol(sample.mol)
-        prep.strip_cache_properties(out_mol)
-        prep.strip_embedding_properties(out_mol)
-        for key, value in sample.original_props.items():
-            out_mol.SetProp(key, str(value))
-        out_mol.SetProp("_Name", molecule_id)
-        out_mol.SetProp("ID", str(output_index))
-        out_mol.SetProp("FW", f"{Descriptors.MolWt(out_mol):.4f}")
-        for key, value in props.items():
-            out_mol.SetProp(key, value)
-        combined_writer.write(out_mol)
+    with sdf_writer(output_dir / "annotated_predictions.sdf") as combined_writer:
+        for output_index, (molecule_id, sample) in enumerate(base_samples.items(), start=1):
+            group = merged_df[merged_df["molecule_id"] == molecule_id].copy()
+            props = build_properties(sample, group, mode)
+            out_mol = Chem.Mol(sample.mol)
+            prep.strip_cache_properties(out_mol)
+            prep.strip_embedding_properties(out_mol)
+            for key, value in sample.original_props.items():
+                out_mol.SetProp(key, str(value))
+            out_mol.SetProp("_Name", molecule_id)
+            out_mol.SetProp("ID", str(output_index))
+            out_mol.SetProp("FW", f"{Descriptors.MolWt(out_mol):.4f}")
+            for key, value in props.items():
+                out_mol.SetProp(key, value)
+            combined_writer.write(out_mol)
 
-        simple = group[["atom_index", "atom_type", "shift_ppm"]].copy().sort_values(["atom_index", "atom_type"])
-        simple.to_csv(output_dir / f"{safe_stem(molecule_id)}.csv", index=False, encoding="utf-8-sig")
-        writer = Chem.SDWriter(str(output_dir / f"{safe_stem(molecule_id)}.sdf"))
-        writer.write(out_mol)
-        writer.close()
-    combined_writer.close()
+            simple = group[["atom_index", "atom_type", "shift_ppm"]].copy().sort_values(["atom_index", "atom_type"])
+            simple.to_csv(output_dir / f"{safe_stem(molecule_id)}.csv", index=False, encoding="utf-8-sig")
+            with sdf_writer(output_dir / f"{safe_stem(molecule_id)}.sdf") as writer:
+                writer.write(out_mol)
 
 
 def parse_args() -> argparse.Namespace:

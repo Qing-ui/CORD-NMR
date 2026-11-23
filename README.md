@@ -23,6 +23,11 @@ research datasets, exploratory work, generated results, or user databases.
 - NMRNet and CASCADE-2.0 prediction bridges.
 - Predicted-to-experimental NMR assignment workspace.
 
+Cross-spectrum intensity correction is off by default. When enabled, clustering
+uses the corrected intensities. To use peak types in the correction, include a
+`type`, `peak_type`, or `dept_type` column with assignments such as `CH` and
+`CH2` in the input peak lists.
+
 ## Install from source
 
 Python 3.10 is the supported baseline. On Windows:

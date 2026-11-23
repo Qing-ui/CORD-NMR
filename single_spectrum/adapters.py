@@ -10,9 +10,9 @@ COLUMN_ALIASES = {
     "sample": ("sample", "sample_id", "spectrum_id", "spec", "spectrum"),
     "ppm": ("ppm", "shift", "delta", "chemical_shift", "peak_ppm", "x", "ppm1", "cppm", "c_ppm", "c ppm", "carbon_ppm", "13c_ppm"),
     "height": ("height", "intensity", "amp", "amplitude", "peak_height", "y"),
-    "width": ("width", "width_ppm", "fwhm", "peak_width"),
+    "width": ("width", "width_ppm", "width_hz", "fwhm", "peak_width"),
     "area": ("area", "integral"),
-    "type": ("type", "peak_type", "dept_type"),
+    "type": ("type", "peak_type", "dept_type", "carbon_type"),
 }
 
 
@@ -48,7 +48,8 @@ def normalize_peak_table(df: pd.DataFrame, default_sample: str = "sample_0") -> 
     if "area" in work.columns:
         work["area"] = pd.to_numeric(work["area"], errors="coerce")
     if "type" in work.columns:
-        work["type"] = work["type"].astype(str)
+        labels = work["type"].astype("string").str.strip()
+        work["type"] = labels.mask(labels.str.lower().isin({"", "nan", "none", "null", "na", "n/a", "unknown"}))
     return work.dropna(subset=["ppm", "height"]).reset_index(drop=True)
 
 

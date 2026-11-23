@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from rdkit import Chem
+from sdf_io import iter_sdf
 from rdkit.Chem import AllChem, rdDistGeom, rdMolDescriptors
 
 
@@ -72,7 +73,7 @@ def load_csv_molecules(csv_path: Path, smiles_column: str, id_column: str | None
 
 
 def load_sdf_molecules(sdf_path: Path) -> list[tuple[str, Chem.Mol, str | None]]:
-    supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False)
+    supplier = iter_sdf(sdf_path)
     molecules: list[tuple[str, Chem.Mol, str | None]] = []
     for index, mol in enumerate(supplier):
         if mol is None:

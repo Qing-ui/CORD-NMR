@@ -240,7 +240,7 @@ function Test-InstalledRuntime {
     )
 
     Write-Step "Verifying the installed CORD-NMR runtime"
-    $appCheck = "import tkinter; import numpy, pandas, scipy, sklearn, matplotlib, PIL, rdkit, tqdm, openpyxl; import gui; print('CORD-NMR GUI runtime OK')"
+    $appCheck = "import tkinter; import numpy, pandas, scipy, sklearn, matplotlib, PIL, rdkit, tqdm, openpyxl, yaml; import gui; print('CORD-NMR GUI runtime OK')"
     Invoke-Python -Python $ApplicationPython -Arguments @("-c", $appCheck) -Action "Loading the CORD-NMR GUI runtime" -WorkingDirectory $projectRoot
     if ($NMRNetPython) {
         $nmrScript = Join-Path $appRoot "script\predict_liquid_batch.py"
@@ -248,8 +248,8 @@ function Test-InstalledRuntime {
     }
     if ($Cascade2Python) {
         $cascadeModel = Join-Path $modelRoot "cascade2\Predict_SMILES_FF_GPR"
-        $verify = "import os, sys; os.chdir(r'$cascadeModel'); sys.path.insert(0, r'$cascadeModel'); sys.path.insert(0, r'$cascadeModel\modules'); import tensorflow as tf; import tensorflow_probability as tfp; from nfp.preprocessing import GraphSequence; from model import make_model; model=make_model(); model.load_weights(r'$cascadeModel\best_model_val_mae.h5'); print('CASCADE-2.0 runtime OK')"
-        Invoke-Python -Python $Cascade2Python -Arguments @("-c", $verify) -Action "Loading the CASCADE-2.0 runtime"
+        $verify = "import sys; from pathlib import Path; root = Path.cwd(); sys.path[:0] = [str(root), str(root / 'modules')]; import tensorflow as tf; import tensorflow_probability as tfp; from nfp.preprocessing import GraphSequence; from model import make_model; model=make_model(); model.load_weights('best_model_val_mae.h5'); print('CASCADE-2.0 runtime OK')"
+        Invoke-Python -Python $Cascade2Python -Arguments @("-c", $verify) -Action "Loading the CASCADE-2.0 runtime" -WorkingDirectory $cascadeModel
     }
 }
 

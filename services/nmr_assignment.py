@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from rdkit import Chem
@@ -339,18 +340,19 @@ def load_predicted_molecule(
     path = Path(sdf_path).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"SDF file does not exist: {path}")
-    supplier = Chem.SDMolSupplier(str(path), removeHs=False, sanitize=False)
     target_id = str(molecule_id).strip() if molecule_id is not None and str(molecule_id).strip() else None
-    for idx, mol in enumerate(supplier, start=1):
-        if mol is None:
-            continue
-        if target_id is not None:
-            mol_id = mol.GetProp("ID").strip() if mol.HasProp("ID") else ""
-            if mol_id == target_id:
+    with path.open("rb") as handle:
+        supplier = Chem.ForwardSDMolSupplier(handle, removeHs=False, sanitize=False)
+        for idx, mol in enumerate(supplier, start=1):
+            if mol is None:
+                continue
+            if target_id is not None:
+                mol_id = mol.GetProp("ID").strip() if mol.HasProp("ID") else ""
+                if mol_id == target_id:
+                    return _prepare_loaded_molecule(mol)
+                continue
+            if idx == int(molecule_index):
                 return _prepare_loaded_molecule(mol)
-            continue
-        if idx == int(molecule_index):
-            return _prepare_loaded_molecule(mol)
     if target_id is not None:
         raise ValueError(f"SDF does not contain a molecule with ID={target_id}.")
     raise ValueError(f"SDF contains fewer than {molecule_index} molecule(s).")
@@ -358,13 +360,14 @@ def load_predicted_molecule(
 
 def list_sdf_molecule_ids(sdf_path: str | Path) -> List[str]:
     path = Path(sdf_path).expanduser()
-    supplier = Chem.SDMolSupplier(str(path), removeHs=False, sanitize=False)
     ids: List[str] = []
-    for idx, mol in enumerate(supplier, start=1):
-        if mol is None:
-            continue
-        mol_id = mol.GetProp("ID").strip() if mol.HasProp("ID") else str(idx)
-        ids.append(mol_id or str(idx))
+    with path.open("rb") as handle:
+        supplier = Chem.ForwardSDMolSupplier(handle, removeHs=False, sanitize=False)
+        for idx, mol in enumerate(supplier, start=1):
+            if mol is None:
+                continue
+            mol_id = mol.GetProp("ID").strip() if mol.HasProp("ID") else str(idx)
+            ids.append(mol_id or str(idx))
     return ids
 
 
@@ -632,18 +635,26 @@ def write_assigned_sdf(
     output = Path(output_sdf_path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
     by_id = {str(result.molecule_name): result for result in results}
-    supplier = Chem.SDMolSupplier(str(source), removeHs=False, sanitize=False)
-    writer = Chem.SDWriter(str(output))
+    staging = None
     try:
-        for idx, mol in enumerate(supplier, start=1):
-            if mol is None:
-                continue
-            mol_id = mol.GetProp("ID").strip() if mol.HasProp("ID") else str(idx)
-            if mol_id in by_id:
-                out_mol = assigned_molecule_from_result(by_id[mol_id])
-            else:
-                out_mol = Chem.Mol(mol)
-            writer.write(out_mol)
+        with source.open("rb") as source_file, NamedTemporaryFile(
+            mode="wt", encoding="utf-8", newline="\n", suffix=".sdf", dir=output.parent, delete=False,
+        ) as target_file:
+            staging = Path(target_file.name)
+            supplier = Chem.ForwardSDMolSupplier(source_file, removeHs=False, sanitize=False)
+            writer = Chem.SDWriter(target_file.file)
+            try:
+                for idx, mol in enumerate(supplier, start=1):
+                    if mol is None:
+                        continue
+                    mol_id = mol.GetProp("ID").strip() if mol.HasProp("ID") else str(idx)
+                    writer.write(assigned_molecule_from_result(by_id[mol_id]) if mol_id in by_id else mol)
+                if writer.NumMols() == 0:
+                    raise ValueError(f"No valid molecules found in {source.name}.")
+            finally:
+                writer.close()
+        staging.replace(output)
     finally:
-        writer.close()
+        if staging is not None:
+            staging.unlink(missing_ok=True)
     return output

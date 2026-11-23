@@ -292,6 +292,7 @@ def run_single_spectrum_pipeline(input_path, *, out_dir, config: SingleSpectrumP
     else:
         train_result = None
     apply_result = apply_intensity_correction_model(input_path=input_path, model_path=model_path, out_dir=out / "calibration_apply", config=cfg.calibration)
+    model = apply_result["model"]
     corrected = apply_result["corrected"]
     detailed, clusters = run_peakgmm(corrected, min_components=cfg.gmm.min_components, max_components=cfg.gmm.max_components, use_log=cfg.gmm.use_log)
     detailed.to_csv(out / "single_spectrum_pipeline_detailed.csv", index=False)
@@ -302,6 +303,8 @@ def run_single_spectrum_pipeline(input_path, *, out_dir, config: SingleSpectrumP
         "n_samples": int(corrected["sample"].nunique()),
         "n_clusters": int(len(clusters)),
         "calibration_model_path": str(model_path),
+        "used_type": bool(model.get("used_type", False)),
+        "used_area": bool(model.get("used_area", False)),
         "train_mode": None if train_result is None else train_result["mode"],
         "gmm": asdict(cfg.gmm),
         "calibration": asdict(cfg.calibration),

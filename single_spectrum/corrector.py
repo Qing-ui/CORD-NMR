@@ -40,7 +40,7 @@ class PeakCorrector:
     ) -> tuple[pd.Series, str, bool]:
         min_area_count = max(3, int(np.ceil(len(work) * 0.3)))
         has_area = "area" in work.columns and work["area"].notna().sum() >= min_area_count
-        type_available = bool(use_type and "type" in work.columns and work["type"].notna().all())
+        type_available = bool(use_type and "type" in work.columns and work["type"].notna().any())
 
         mode = (calibration_mode or "area_match").strip().lower()
         if mode not in {"area_match", "height_stabilize"}:
@@ -79,6 +79,8 @@ class PeakCorrector:
         delta_clip: float | None = 0.63,
     ) -> dict[str, Any]:
         work = self._prepare_work(df)
+        if use_type and ("type" not in work or not work["type"].notna().any()):
+            raise ValueError("Type-aware correction requires a peak type column with labels, such as CH, CH2, or CH3.")
         y, target_source, used_area = self._infer_target(
             work,
             use_type=use_type,
@@ -124,7 +126,7 @@ class PeakCorrector:
             "mode": "with_type" if type_used else "basic",
             "used_area": bool(used_area),
             "used_type": type_used,
-            "calibration_mode": calibration_mode,
+            "calibration_mode": "area_match" if used_area else "height_stabilize",
             "shrink_strength": float(shrink_strength),
             "delta_clip": clip_value,
             "target_source": target_source,
