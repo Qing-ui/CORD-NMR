@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, font as tkfont, messagebox, simpledialog
 import csv
 import os
 import shutil
@@ -18,6 +18,7 @@ from PIL import ImageTk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from rdkit import Chem
 from rdkit.Chem import Draw, rdMolDescriptors
+from rdkit.Chem.Draw import rdMolDraw2D
 
 
 class _NullGuiStream:
@@ -2740,6 +2741,10 @@ class NMRAssignmentFrame(ttk.Frame):
     """CORD-NMR predicted-structure-based NMR assignment workflow."""
 
     EXAMPLE_SMILES = r"CC([C@@H]1OC([C@@H]2[C@H](C2(C)C)/C=C(C(OC)=O)\C)=O)=C(C(C1)=O)C/C=C\C=C"
+    INPUT_FONT = ("Consolas", 15)
+    TABLE_FONT = ("Arial", 15)
+    TABLE_HEADING_FONT = ("Arial", 13, "bold")
+    EXPORT_FONT = ("Consolas", 17)
 
     STATUS_TAGS = {
         "ok": {"background": "#F4FFF6"},
@@ -2815,8 +2820,18 @@ class NMRAssignmentFrame(ttk.Frame):
         return DEFAULT_NMR_PREDICTOR_ROOT
 
     def create_widgets(self):
-        outer = ttk.Frame(self)
-        outer.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
+        action_bar = ttk.Frame(self)
+        action_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=14, pady=(6, 10))
+
+        canvas = tk.Canvas(self, bg=ChemTheme.COLORS["background"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(10, 0))
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(14, 0), pady=(10, 0))
+        outer = ttk.Frame(canvas)
+        body = canvas.create_window(0, 0, anchor=tk.NW, window=outer)
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(body, width=event.width))
+        outer.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
 
         intro = ttk.LabelFrame(outer, text="NMR Assignment")
         intro.pack(fill=tk.X, pady=(0, 8))
@@ -2827,7 +2842,7 @@ class NMRAssignmentFrame(ttk.Frame):
                 "Rows are color-coded only: yellow = ambiguous/caution, red = large final error."
             ),
             style="Card.TLabel",
-            wraplength=980,
+            wraplength=875,
         ).pack(anchor=tk.W, padx=10, pady=8)
 
         setup = ttk.LabelFrame(outer, text="Input and Parameters")
@@ -2839,7 +2854,7 @@ class NMRAssignmentFrame(ttk.Frame):
         ttk.Label(setup, text="Single uses SMILES or precomputed SDF; Batch uses total SDF + folders.", style="Muted.TLabel").grid(row=0, column=2, columnspan=7, sticky=tk.W, padx=5, pady=5)
 
         ttk.Label(setup, text="SMILES").grid(row=1, column=0, sticky=tk.W, padx=8, pady=5)
-        self.smiles_text = tk.Text(setup, height=2, width=96, wrap=tk.NONE, font=ChemTheme.FONTS["input"])
+        self.smiles_text = tk.Text(setup, height=2, width=40, wrap=tk.CHAR, font=self.INPUT_FONT)
         self.smiles_text.grid(row=1, column=1, columnspan=6, sticky=tk.EW, padx=5, pady=5)
         ttk.Button(setup, text="Validate", style="Secondary.TButton", command=self.validate_smiles).grid(row=1, column=7, sticky=tk.W, padx=5, pady=5)
         ttk.Button(setup, text="Example", style="Secondary.TButton", command=self.load_example_smiles).grid(row=1, column=8, sticky=tk.W, padx=5, pady=5)
@@ -2870,7 +2885,8 @@ class NMRAssignmentFrame(ttk.Frame):
         ttk.Button(setup, text="Check", style="Secondary.TButton", command=self.check_predictor_root).grid(row=5, column=7, sticky=tk.W, padx=5, pady=5)
         setup.columnconfigure(1, weight=1)
 
-        self.batch_frame = ttk.LabelFrame(outer, text="Batch Inputs")
+        self.data_frame = ttk.Frame(outer)
+        self.batch_frame = ttk.LabelFrame(self.data_frame, text="Batch Inputs")
         ttk.Label(self.batch_frame, text="Total predicted SDF").grid(row=0, column=0, sticky=tk.W, padx=8, pady=5)
         ttk.Entry(self.batch_frame, textvariable=self.batch_sdf_path, width=80).grid(row=0, column=1, columnspan=4, sticky=tk.EW, padx=5, pady=5)
         ttk.Button(self.batch_frame, text="Browse", command=self.select_batch_sdf).grid(row=0, column=5, sticky=tk.W, padx=5, pady=5)
@@ -2887,6 +2903,7 @@ class NMRAssignmentFrame(ttk.Frame):
             self.batch_frame,
             text="Files are matched by SDF ID and filename stem. If exact filename matching fails, sorted file order is used.",
             style="Muted.TLabel",
+            wraplength=730,
         ).grid(row=4, column=1, columnspan=5, sticky=tk.W, padx=5, pady=(0, 6))
         self.batch_frame.columnconfigure(1, weight=1)
 
@@ -2910,7 +2927,8 @@ class NMRAssignmentFrame(ttk.Frame):
             ttk.Label(thresholds, text=label).grid(row=row, column=col, sticky=tk.W, padx=(8, 2), pady=4)
             ttk.Entry(thresholds, textvariable=var, width=8).grid(row=row, column=col + 1, sticky=tk.W, padx=(0, 8), pady=4)
 
-        self.single_data_frame = ttk.LabelFrame(outer, text="Experimental Data")
+        self.data_frame.pack(fill=tk.X)
+        self.single_data_frame = ttk.LabelFrame(self.data_frame, text="Experimental Data")
         self.single_data_frame.pack(fill=tk.X, pady=(0, 8))
         one_d = ttk.Frame(self.single_data_frame)
         one_d.grid(row=0, column=0, sticky=tk.NSEW, padx=6, pady=6)
@@ -2922,14 +2940,16 @@ class NMRAssignmentFrame(ttk.Frame):
         mode_box.pack(side=tk.LEFT)
         mode_box.bind("<<ComboboxSelected>>", self.on_shift_input_mode_change)
         ttk.Label(header, text="C: carbon shifts; H: proton shifts", style="Muted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
-        self.shift_text = tk.Text(one_d, height=6, width=50, wrap=tk.WORD, font=ChemTheme.FONTS["input"])
+        self.shift_text = tk.Text(one_d, height=7, width=24, wrap=tk.WORD, font=self.INPUT_FONT)
         self.shift_text.pack(fill=tk.BOTH, expand=True)
-        self.hsqc_text = self._text_panel(self.single_data_frame, "HSQC table: C/H shifts with optional intensity; negative intensity matches CH2 only", 1)
+        self.hsqc_text = self._text_panel(
+            self.single_data_frame,
+            "HSQC table: C/H shifts with optional intensity; negative intensity matches CH2 only",
+            1,
+        )
         self.single_data_frame.columnconfigure(0, weight=1)
         self.single_data_frame.columnconfigure(1, weight=1)
 
-        action_bar = ttk.Frame(outer)
-        action_bar.pack(fill=tk.X, pady=(0, 8))
         self.assign_button = ttk.Button(action_bar, text="Assign", command=self.run_assignment)
         self.assign_button.pack(side=tk.LEFT, padx=(0, 6), ipadx=14)
         self.status_label = ttk.Label(action_bar, text="", style="Card.TLabel")
@@ -2944,15 +2964,15 @@ class NMRAssignmentFrame(ttk.Frame):
                 "The workspace keeps the structure and table spacious, and label edits update the drawing and export text."
             ),
             style="Card.TLabel",
-            wraplength=980,
+            wraplength=875,
         ).pack(anchor=tk.W, padx=10, pady=10)
         self.refresh_assignment_mode()
 
     def _text_panel(self, parent, title, col):
         frame = ttk.Frame(parent)
         frame.grid(row=0, column=col, sticky=tk.NSEW, padx=6, pady=6)
-        ttk.Label(frame, text=title, style="Card.TLabel").pack(anchor=tk.W)
-        txt = tk.Text(frame, height=6, width=36, wrap=tk.WORD, font=ChemTheme.FONTS["input"])
+        ttk.Label(frame, text=title, style="Card.TLabel", wraplength=384).pack(anchor=tk.W)
+        txt = tk.Text(frame, height=7, width=24, wrap=tk.WORD, font=self.INPUT_FONT)
         txt.pack(fill=tk.BOTH, expand=True)
         parent.columnconfigure(col, weight=1)
         return txt
@@ -2963,21 +2983,25 @@ class NMRAssignmentFrame(ttk.Frame):
         win = tk.Toplevel(self)
         self.result_window = win
         win.title("NMR Assignment Workspace")
-        win.geometry("1120x700")
+        win.geometry(f"{min(1360, win.winfo_screenwidth())}x{min(680, win.winfo_screenheight() - 80)}")
         win.minsize(960, 560)
         win.configure(bg=ChemTheme.COLORS["background"])
         win.protocol("WM_DELETE_WINDOW", self._close_workspace_window)
 
-        top = ttk.Frame(win)
-        top.pack(fill=tk.X, padx=10, pady=(10, 6))
-        self.workspace_title_label = ttk.Label(top, text="NMR Assignment Workspace", font=("Helvetica", 14, "bold"))
+        title_bar = ttk.Frame(win)
+        title_bar.pack(fill=tk.X, padx=10, pady=(10, 4))
+        self.workspace_title_label = ttk.Label(
+            title_bar, text="NMR Assignment Workspace", font=("Arial", 16, "bold"),
+        )
         self.workspace_title_label.pack(side=tk.LEFT)
+        top = ttk.Frame(win)
+        top.pack(fill=tk.X, padx=10, pady=(0, 6))
         if self.batch_items:
             self.prev_button = ttk.Button(top, text="Previous", style="Secondary.TButton", command=lambda: self.show_batch_item(self.batch_index - 1))
             self.prev_button.pack(side=tk.LEFT, padx=(14, 4))
             self.next_button = ttk.Button(top, text="Next", style="Secondary.TButton", command=lambda: self.show_batch_item(self.batch_index + 1))
             self.next_button.pack(side=tk.LEFT, padx=4)
-            self.batch_nav_label = ttk.Label(top, text="", style="Card.TLabel")
+            self.batch_nav_label = ttk.Label(top, text="", style="Card.TLabel", font=("Arial", 13, "bold"))
             self.batch_nav_label.pack(side=tk.LEFT, padx=8)
             ttk.Button(top, text="Save Batch TXT", style="Secondary.TButton", command=self.save_batch_txt_dialog).pack(side=tk.RIGHT, padx=4)
         ttk.Button(top, text="Export SDF", style="Secondary.TButton", command=self.export_sdf_dialog).pack(side=tk.RIGHT, padx=4)
@@ -2997,18 +3021,30 @@ class NMRAssignmentFrame(ttk.Frame):
 
         self.structure_canvas = tk.Canvas(
             structure_frame,
-            width=520,
+            width=580,
             height=560,
             bg="white",
             highlightthickness=1,
             highlightbackground=ChemTheme.COLORS["border"],
         )
         self.structure_canvas.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        self.structure_canvas.bind("<Configure>", lambda _event: self.render_structure())
         self.structure_canvas.bind("<Motion>", self.on_structure_motion)
         self.structure_canvas.bind("<Leave>", lambda _e: self.set_hover_atom(None))
 
         columns = ("atom", "label", "type", "pred", "exp", "delta")
-        self.table = ttk.Treeview(table_frame, columns=columns, show="tree headings", height=22)
+        style = ttk.Style(win)
+        table_font = tkfont.Font(win, font=self.TABLE_FONT)
+        heading_font = tkfont.Font(win, font=self.TABLE_HEADING_FONT)
+        style.configure(
+            "Assignment.Treeview",
+            font=self.TABLE_FONT,
+            rowheight=table_font.metrics("linespace") + 5,
+        )
+        style.configure("Assignment.Treeview.Heading", font=self.TABLE_HEADING_FONT)
+        self.table = ttk.Treeview(
+            table_frame, columns=columns, show="tree headings", height=20, style="Assignment.Treeview",
+        )
         self.table.heading("#0", text="")
         self.table.column("#0", width=24, stretch=False)
         headings = {
@@ -3019,10 +3055,11 @@ class NMRAssignmentFrame(ttk.Frame):
             "exp": "Shift exp",
             "delta": "Delta",
         }
-        widths = {"atom": 95, "label": 80, "type": 70, "pred": 100, "exp": 100, "delta": 85}
-        for col in columns:
+        samples = ("H22/H23/H24", "99ab", "H eq", "199.99", "199.99", "99.99")
+        for col, sample in zip(columns, samples):
             self.table.heading(col, text=headings[col])
-            self.table.column(col, width=widths[col], anchor=tk.CENTER)
+            width = max(table_font.measure(sample), heading_font.measure(headings[col])) + 20
+            self.table.column(col, width=width, minwidth=width, anchor=tk.CENTER)
         yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.table.yview)
         xscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.table.xview)
         self.table.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -3601,8 +3638,10 @@ class NMRAssignmentFrame(ttk.Frame):
             return
         self.structure_canvas.delete("all")
         self._atom_positions = {}
-        width = max(520, self.structure_canvas.winfo_width())
-        height = max(380, self.structure_canvas.winfo_height())
+        width = self.structure_canvas.winfo_width()
+        height = self.structure_canvas.winfo_height()
+        if width <= 1 or height <= 1:
+            return
         if self.result is None:
             self.structure_canvas.create_text(width // 2, height // 2, text="Run assignment to draw structure.", fill=ChemTheme.COLORS["muted"])
             return
@@ -3621,12 +3660,19 @@ class NMRAssignmentFrame(ttk.Frame):
             if self._hover_atom is not None:
                 highlight_atoms.append(self._hover_atom)
                 highlight_colors[self._hover_atom] = (0.12, 0.38, 0.95)
+            draw_options = rdMolDraw2D.MolDrawOptions()
+            draw_options.padding = 0.04
+            draw_options.annotationFontScale = 1.0
+            draw_options.minFontSize = 18
+            draw_options.maxFontSize = 36
+            draw_options.bondLineWidth = 2.3
             image = Draw.MolToImage(
                 display_mol,
                 size=(width, height),
                 wedgeBonds=False,
                 highlightAtoms=sorted(set(highlight_atoms)),
                 highlightAtomColors=highlight_colors,
+                options=draw_options,
             )
             self._structure_photo = ImageTk.PhotoImage(image)
             self.structure_canvas.create_image(0, 0, anchor=tk.NW, image=self._structure_photo)
@@ -4135,13 +4181,16 @@ class NMRAssignmentFrame(ttk.Frame):
             return
         win = tk.Toplevel(self)
         win.title("Exported NMR Assignment Text")
-        win.geometry("860x360")
+        win.geometry("900x540")
         win.configure(bg=ChemTheme.COLORS["background"])
-        txt = tk.Text(win, wrap=tk.WORD, font=ChemTheme.FONTS["input"])
+        txt = tk.Text(win, wrap=tk.WORD, font=self.EXPORT_FONT)
         txt.insert("1.0", text)
-        txt.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 6))
         bar = ttk.Frame(win)
-        bar.pack(fill=tk.X, padx=10, pady=(0, 10))
+        bar.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0, 10))
+        scrollbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=txt.yview)
+        txt.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=(10, 6))
+        txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=(10, 6))
         ttk.Button(bar, text="Copy", command=lambda: self.copy_export_text(txt.get("1.0", tk.END).strip())).pack(side=tk.LEFT, padx=4)
         ttk.Button(bar, text="Save", command=lambda: self.save_export_text(txt.get("1.0", tk.END).strip())).pack(side=tk.LEFT, padx=4)
 
