@@ -46,6 +46,9 @@ def is_runtime_file(relative: Path) -> bool:
     if relative in EXTERNAL_RUNTIME_FILES:
         return True
     return relative in {
+        Path("docs/FINAL_METHOD_CONTRACT.md"),
+        Path("docs/LICENSE-ReCQC-2.0-Speed.txt"),
+        Path("docs/PUBLICATION_SCOPE.md"),
         Path("docs/THIRD_PARTY_NOTICES.md"),
         Path("scripts/install_prediction_runtime.ps1"),
     }
