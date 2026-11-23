@@ -2744,7 +2744,7 @@ class NMRAssignmentFrame(ttk.Frame):
     INPUT_FONT = ("Consolas", 15)
     TABLE_FONT = ("Arial", 15)
     TABLE_HEADING_FONT = ("Arial", 13, "bold")
-    EXPORT_FONT = ("Consolas", 17)
+    EXPORT_FONT = ("Consolas", 15)
 
     STATUS_TAGS = {
         "ok": {"background": "#F4FFF6"},
@@ -4181,7 +4181,7 @@ class NMRAssignmentFrame(ttk.Frame):
             return
         win = tk.Toplevel(self)
         win.title("Exported NMR Assignment Text")
-        win.geometry("900x540")
+        win.geometry("860x500")
         win.configure(bg=ChemTheme.COLORS["background"])
         txt = tk.Text(win, wrap=tk.WORD, font=self.EXPORT_FONT)
         txt.insert("1.0", text)
