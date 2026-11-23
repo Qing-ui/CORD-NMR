@@ -16,9 +16,10 @@ Two route organisations are retained: `global strict` preserves the original
 occurrence masks, while `common-mask` projects high-mask trajectories into
 shared contiguous sub-mask views after global conflict resolution. Each route supports `mask-only`, `PMTC`, and
 `QG-PMTC`. PMTC bins trajectories by occurrence mask and organises each bucket
-using centred log-intensity profiles and trend features. The recorded
-sample-number-specific PMTC caps and fraction limits apply to each route.
-For six or more samples, each route uses its five-sample settings.
+using centred log-intensity profiles and trend features. PMTC caps and
+fraction limits are specified separately for each route at
+N = 3, N = 4, and N ≥ 5. The same limits apply to the directional-HAC
+candidate in QG-PMTC.
 QG-PMTC starts from PMTC labels and accepts profile-based
 merges or directional-HAC splits only when the unsupervised quality guards
 support them; otherwise it returns the PMTC state. Coverage and

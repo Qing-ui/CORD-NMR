@@ -2787,8 +2787,11 @@ def _pmtc_hsqc_labels(
     ns = len(sample_ids)
     max_tracks_map = pmtc_max_tracks_by_n_samples or {3: 32, 4: 28, 5: 26}
     frac_map = pmtc_frac_limit_by_n_samples or {3: 0.55, 4: 0.47, 5: 0.41}
-    max_tracks = int(max_tracks_map.get(ns, max_tracks_map.get(str(ns), 26)))
-    frac_limit = float(frac_map.get(ns, frac_map.get(str(ns), 0.41)))
+    max_tracks_map = {int(key): value for key, value in max_tracks_map.items()}
+    frac_map = {int(key): value for key, value in frac_map.items()}
+    size_group = min(ns, 5)
+    max_tracks = int(max_tracks_map.get(ns, max_tracks_map.get(size_group, 26)))
+    frac_limit = float(frac_map.get(ns, frac_map.get(size_group, 0.41)))
     min_size = max(1, int(pmtc_min_cluster_size))
 
     buckets: Dict[str, List[int]] = defaultdict(list)
