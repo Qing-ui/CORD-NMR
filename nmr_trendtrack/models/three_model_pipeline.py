@@ -10,6 +10,7 @@ from statistics import median
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 from nmr_trendtrack.config import AppConfig
+from nmr_trendtrack.models.strict_trajectories import enumerate_strict_trajectories
 from nmr_trendtrack.contracts import (
     ClusterPrototype,
     ComponentClusterPrototype,
@@ -273,12 +274,12 @@ def _setpacking_track_weight(model_cost: float, high_mask_bonus: float):
 
 
 def _run_v4_frontend(samples: List[Sample], config: AppConfig) -> Tuple[List[str], Dict[str, List[Peak]], Dict[str, float], List[dict], dict]:
-    base, gsp = _v4_modules()
+    # The alignment reference stores its tolerances at module scope. Use a
+    # per-run instance so concurrent calls cannot change each other's gates.
+    base = _load_v4_module("13c_joint_align_cluster.py", "nmr_trendtrack_v4_run")
+    _, gsp = _v4_modules()
     ordered_ids, rows, peaks_original = _rows_from_peaklists(samples)
 
-    # ReCQC 3.0 exposes the V5/V4-front-end tolerances in the GUI.
-    # The original reference file stores them as module globals, so patch them
-    # before running alignment/track enumeration.
     region_windows = list(getattr(config.align, "ppm_window_by_region", []) or [])
     if region_windows:
         base.REGIONS = [(float(lo), float(hi), float(win)) for lo, hi, win in region_windows]
@@ -286,17 +287,16 @@ def _run_v4_frontend(samples: List[Sample], config: AppConfig) -> Tuple[List[str
     base.RAW_SPAN_LIMIT = float(getattr(config.align, "max_track_span_ppm", 0.50) or 0.50)
 
     residual_gate = float(getattr(config.model, "residual_gate", 0.15))
-    top_k = int(getattr(config.model, "top_k_per_seed", 6))
+    top_k = int(config.model.top_k_per_seed)
     max_per_sample = int(getattr(config.model, "max_per_sample", 3))
     exact_limit = int(getattr(config.model, "exact_limit", 12))
     beam_width = int(getattr(config.model, "beam_width", 120))
     node_limit = int(getattr(config.model, "node_limit", 100000))
     model_cost = float(getattr(config.model, "setpacking_model_cost", 1.10) or 1.10)
     high_mask_bonus = float(getattr(config.model, "setpacking_high_mask_bonus", 0.0) or 0.0)
-    gsp.track_weight = _setpacking_track_weight(model_cost, high_mask_bonus)
-
-    corrected, shift_model, shift_diag = base.apply_shift(rows, ordered_ids)
-    cand = base.enumerate_candidate_tracks(
+    corrected, shift_model, _ = base.apply_shift(rows, ordered_ids)
+    cand = enumerate_strict_trajectories(
+        base,
         corrected,
         ordered_ids,
         residual_gate=residual_gate,
@@ -304,8 +304,10 @@ def _run_v4_frontend(samples: List[Sample], config: AppConfig) -> Tuple[List[str
         max_per_sample=max_per_sample,
         min_samples=2,
     )
-    pack_fn = getattr(gsp, "mask_stratified_global_set_packing", gsp.componentwise_global_set_packing)
-    selected, pack_info = pack_fn(cand, exact_limit=exact_limit, beam_width=beam_width, node_limit=node_limit)
+    selected, pack_info = gsp.componentwise_global_set_packing(
+        cand, exact_limit=exact_limit, beam_width=beam_width, node_limit=node_limit,
+        weight_fn=_setpacking_track_weight(model_cost, high_mask_bonus),
+    )
     shifts = {sid: 0.0 for sid in ordered_ids}
     for sid in ordered_ids:
         vals = []
@@ -318,6 +320,7 @@ def _run_v4_frontend(samples: List[Sample], config: AppConfig) -> Tuple[List[str
     diag = {
         "n_candidate_tracks": len(cand),
         "n_selected_tracks": len(selected),
+        "top_k_per_seed": top_k,
         "setpacking_model_cost": model_cost,
         "setpacking_high_mask_bonus": high_mask_bonus,
         **pack_info,
@@ -637,8 +640,10 @@ def _pmtc_labels(tracks: List[dict], samples: List[str], config: AppConfig) -> T
     max_tracks_map = getattr(config.model, "pmtc_max_tracks_by_n_samples", {}) or {3: 32, 4: 28, 5: 26}
     frac_map = getattr(config.model, "pmtc_frac_limit_by_n_samples", {}) or {3: 0.55, 4: 0.47, 5: 0.41}
     min_cluster_size = int(getattr(config.model, "pmtc_min_cluster_size", 3))
-    max_tracks = int(max_tracks_map.get(ns, max_tracks_map.get(str(ns), 26)))
-    frac_limit = float(frac_map.get(ns, frac_map.get(str(ns), 0.41)))
+    max_tracks_map = {int(k): v for k, v in max_tracks_map.items()}
+    frac_map = {int(k): v for k, v in frac_map.items()}
+    max_tracks = int(max_tracks_map.get(ns, max_tracks_map.get(5, 26)))
+    frac_limit = float(frac_map.get(ns, frac_map.get(5, 0.41)))
 
     buckets: Dict[str, List[int]] = defaultdict(list)
     for i, t in enumerate(tracks):

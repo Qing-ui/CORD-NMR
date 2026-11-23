@@ -2,8 +2,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import csv
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +17,6 @@ from PIL import ImageTk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from rdkit import Chem
 from rdkit.Chem import Draw, rdMolDescriptors
-import CarbonScoreProcess
 
 
 class _NullGuiStream:
@@ -35,19 +36,6 @@ if sys.stderr is None:
     sys.stderr = _NullGuiStream()
 
 
-def _close_carbon_thread_connection():
-    conn = getattr(CarbonScoreProcess.thread_local, "conn", None)
-    if conn is None:
-        return
-    try:
-        conn.close()
-    finally:
-        try:
-            delattr(CarbonScoreProcess.thread_local, "conn")
-        except AttributeError:
-            pass
-
-
 from PROCESSSDFFILES import SDFFileSelector
 from CarbonScorerResult import *
 from HSQCScorerResult import *
@@ -56,6 +44,7 @@ import json
 import re
 
 from recqc_cluster import (
+    DEFAULT_C_TOP_K,
     DEFAULT_REGION_WINDOWS,
     format_c_values,
     format_hsqc_points,
@@ -89,7 +78,7 @@ from services.nmr_assignment import (
 )
 
 APP_NAME = "CORD-NMR"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.2"
 APP_DISPLAY_NAME = APP_NAME
 
 C_FRONTEND_LABELS = [
@@ -110,7 +99,7 @@ GLOBAL_STRICT_DEFAULTS = {
     "qg_max_rise": 1,
 }
 COMMON_MASK_DEFAULTS = {
-    "span": "1.0",
+    "span": "1.2",
     "residual_gate": "1.0",
     "max_tracks_3": "28",
     "max_tracks_4": "24",
@@ -121,6 +110,48 @@ COMMON_MASK_DEFAULTS = {
     "setpacking_high_mask_bonus": 0.0,
     "qg_max_rise": 4,
 }
+
+
+def _open_dereplication_results(parent, scorer_class, config):
+    """Keep a private run database alive for each open result window."""
+    workspace = tempfile.TemporaryDirectory(prefix="cord-nmr-search-")
+    try:
+        db_path = Path(workspace.name) / "chem_data.db"
+        scorer = scorer_class(**config, db_path=str(db_path))
+        results = scorer.execute()
+        with tempfile.TemporaryDirectory(dir=Path.cwd(), prefix=".cord-nmr-db-") as staging:
+            latest = Path(staging) / db_path.name
+            shutil.copyfile(db_path, latest)
+            latest.replace(Path.cwd() / db_path.name)
+        if not results:
+            messagebox.showinfo("Analysis", "No molecules matched the selected scoring settings.", parent=parent)
+            workspace.cleanup()
+            return
+
+        plots_root = Path("results") / "dereplication"
+        plots_root.mkdir(parents=True, exist_ok=True)
+        output_dir = tempfile.mkdtemp(dir=plots_root, prefix="search-")
+        if scorer_class is CarbonOnlyScorerGUI:
+            CarbonResultVisualizer(str(db_path), results).generate_plots(output_dir)
+            viewer = ResultViewer(str(db_path), results, output_dir)
+        elif scorer_class is CHOnlyScorerGUI:
+            CHMatchVisualizer(str(db_path), results, mode=config["ch_mode"]).generate_plots(output_dir)
+            viewer = CHResultViewer(str(db_path), results, output_dir)
+        else:
+            scorer._generate_plots(output_dir, results=results)
+            viewer = CombinedResultViewer(str(db_path), results, output_dir)
+        viewer.create_result_window(parent)
+        window = viewer.top
+
+        def release_database(event):
+            if event.widget is window:
+                workspace.cleanup()
+
+        window.bind("<Destroy>", release_database, add="+")
+    except Exception:
+        workspace.cleanup()
+        raise
+
 
 CROSS_MODEL_LABELS = [
     model_display_label("v5_enum", include_full_name=False),
@@ -771,20 +802,10 @@ class CombinedModeFrame(BaseModeFrame):
         scoring_config = self.process_carbon_scoring_config()
         config.update(scoring_config)
 
-        # try:
-        pipeline = CombinedScorerGUI(**config)
-        results = pipeline.execute()
-        pipeline._generate_plots(output_dir="combined_results")
-
-        viewer = CombinedResultViewer(
-            db_path="chem_data.db",
-            results=results,
-            output_dir="combined_results"
-        )
-        viewer.create_result_window(self.master)
-        #
-        # except Exception as e:
-        #     messagebox.showerror("Analysis error", f"An error occurred while performing the analysis:\n{str(e)}")
+        try:
+            _open_dereplication_results(self.master, CombinedScorerGUI, config)
+        except Exception as e:
+            messagebox.showerror("Analysis error", str(e))
     def get_ch_data(self):
 
         ch_data = {}
@@ -1092,19 +1113,7 @@ class CarbonOnlyModeFrame(BaseModeFrame):
         config.update(scoring_config)
 
         try:
-            pipeline = CarbonOnlyScorerGUI(**config)
-            try:
-                results = pipeline.execute()
-            finally:
-                _close_carbon_thread_connection()
-            visualizer = CarbonResultVisualizer(
-                db_path="chem_data.db",
-                top_results=results
-            )
-            visualizer.generate_plots(output_dir="molecule_plots")
-
-            # 显示结果窗口
-            ResultViewer("chem_data.db", results).create_result_window(self.master)
+            _open_dereplication_results(self.master, CarbonOnlyScorerGUI, config)
 
         except Exception as e:
             messagebox.showerror("Analysis error", str(e))
@@ -1256,17 +1265,7 @@ class CHMatchModeFrame(BaseModeFrame):
 
             try:
 
-                pipeline = CHOnlyScorerGUI(**config)
-                results = pipeline.execute()
-                visualizer = CHMatchVisualizer(
-                db_path="chem_data.db",
-                top_results=results,
-                mode=config['ch_mode']
-                )
-                results = pipeline.execute()
-                viewer = CHResultViewer(db_path="chem_data.db", results=results)
-                viewer.create_result_window(self.master)
-                visualizer.generate_plots()
+                _open_dereplication_results(self.master, CHOnlyScorerGUI, config)
             except Exception as e:
                 messagebox.showerror("Analysis error", str(e))
 
@@ -1628,7 +1627,6 @@ class ClusterModeFrame(ttk.Frame):
         return self._initial_dir(
             "_last_sample_dir",
             [
-                project_root / "data" / "bench45_mask_balanced_data" / "blind_peaklists_and_manifests",
                 Path.home() / "Downloads",
                 project_root,
             ],
@@ -1859,7 +1857,7 @@ class ClusterModeFrame(ttk.Frame):
         self.c_presence_only = tk.BooleanVar(value=False)
         self.c_presence_only_check = ttk.Checkbutton(
             c_entry_grid,
-            text="Common-mask output only",
+            text="Mask-only",
             variable=self.c_presence_only,
         )
         self.c_presence_only_check.grid(row=0, column=4, columnspan=2, sticky=tk.W, padx=4, pady=3)
@@ -1997,7 +1995,7 @@ class ClusterModeFrame(ttk.Frame):
         align_frame = ttk.Frame(param_outer)
         self.c_span_tol = self._labeled_entry(align_frame, "C track span ≤", "1.0", 0, 0)
         self.residual_gate = self._labeled_entry(align_frame, "C corrected gate", "1.0", 0, 2)
-        self.top_k_per_seed = self._labeled_entry(align_frame, "top_k/seed", "6", 0, 4)
+        self.top_k_per_seed = self._labeled_entry(align_frame, "HSQC top_k/seed", "6", 0, 4)
         self.max_per_sample = self._labeled_entry(align_frame, "max/sample", "3", 0, 6)
 
         self.hsqc_c_tol = self._labeled_entry(align_frame, "HSQC C window", "1.0", 1, 0)
@@ -2018,7 +2016,7 @@ class ClusterModeFrame(ttk.Frame):
 
         pmtc_frame = ttk.Frame(param_outer)
         self.c_presence_only = tk.BooleanVar(value=False)
-        self.c_presence_only_check = ttk.Checkbutton(pmtc_frame, text="Common-mask output only", variable=self.c_presence_only)
+        self.c_presence_only_check = ttk.Checkbutton(pmtc_frame, text="Mask-only", variable=self.c_presence_only)
         self.c_presence_only_check.grid(row=2, column=0, columnspan=4, sticky=tk.W, padx=4, pady=3)
         self.pmtc_min_cluster_size = self._labeled_entry(pmtc_frame, "PMTC min cluster", "3", 0, 0)
         self.max_tracks_3 = self._labeled_entry(pmtc_frame, "max tracks n=3", GLOBAL_STRICT_DEFAULTS["max_tracks_3"], 0, 2)
@@ -2115,14 +2113,15 @@ class ClusterModeFrame(ttk.Frame):
         single_state = "normal" if kind == "C_SINGLE" else "disabled"
         correction_state = "normal" if kind in ("C_MULTI", "C_SINGLE", "HSQC") else "disabled"
         frontend_key = self._selected_frontend_key() if kind in ("C_MULTI", "HSQC") else ""
-        mask_only_state = "normal" if kind in ("C_MULTI", "HSQC") and frontend_key == "common_mask" else "disabled"
+        mask_only_state = "normal" if kind == "C_MULTI" or (kind == "HSQC" and frontend_key == "common_mask") else "disabled"
         if mask_only_state == "disabled":
             self.c_presence_only.set(False)
 
         for ent in [self.c_span_tol, self.residual_gate]:
             ent.config(state=c_cross_state)
         self.c_presence_only_check.config(state=mask_only_state)
-        for ent in [self.top_k_per_seed, self.max_per_sample, self.exact_limit, self.beam_width, self.node_limit,
+        self.top_k_per_seed.config(state=h_state)
+        for ent in [self.max_per_sample, self.exact_limit, self.beam_width, self.node_limit,
                     self.min_track_size, self.candidate_min_score, self.pair_score_weight, self.reciprocal_best_bonus]:
             ent.config(state=cross_state)
         for ent in [self.hsqc_c_tol, self.hsqc_h_tol, self.hsqc_c_span_tol, self.hsqc_h_span_tol]:
@@ -2257,63 +2256,37 @@ class ClusterModeFrame(ttk.Frame):
                     raise ValueError("13C cross-sample clustering needs at least two sample peak-list files.")
                 model_key = self._selected_model_key()
                 frontend_key = self._selected_frontend_key()
-                if bool(self.c_presence_only.get()):
-                    if frontend_key != "common_mask":
-                        raise ValueError("Mask-only output is available only for the common-mask front end.")
+                mask_only = self.c_presence_only.get()
+                carbon_options = dict(
+                    region_windows=region_windows,
+                    span_tol=float(self.c_span_tol.get()),
+                    residual_gate=float(self.residual_gate.get()),
+                    top_k_per_seed=DEFAULT_C_TOP_K,
+                    max_per_sample=int(self.max_per_sample.get()),
+                    exact_limit=int(self.exact_limit.get()),
+                    beam_width=int(self.beam_width.get()),
+                    node_limit=int(self.node_limit.get()),
+                    setpacking_high_mask_bonus=self._setpacking_high_mask_bonus(),
+                    correction_options=correction_options,
+                    output_dir=run_dir,
+                )
+                if mask_only and frontend_key == "common_mask":
                     clusters = run_c_presence_mask_clustering(
-                        self.sample_files,
-                        model=model_key,
-                        region_windows=region_windows,
-                        span_tol=float(self.c_span_tol.get()),
-                        residual_gate=float(self.residual_gate.get()),
-                        top_k_per_seed=int(self.top_k_per_seed.get()),
-                        max_per_sample=int(self.max_per_sample.get()),
-                        exact_limit=int(self.exact_limit.get()),
-                        beam_width=int(self.beam_width.get()),
-                        node_limit=int(self.node_limit.get()),
-                        setpacking_high_mask_bonus=self._setpacking_high_mask_bonus(),
-                        correction_options=correction_options,
-                        output_dir=run_dir,
-                    )
-                elif frontend_key == "common_mask":
-                    clusters = run_c_common_mask_backend_clustering(
-                        self.sample_files,
-                        model=model_key,
-                        region_windows=region_windows,
-                        span_tol=float(self.c_span_tol.get()),
-                        residual_gate=float(self.residual_gate.get()),
-                        top_k_per_seed=int(self.top_k_per_seed.get()),
-                        max_per_sample=int(self.max_per_sample.get()),
-                        exact_limit=int(self.exact_limit.get()),
-                        beam_width=int(self.beam_width.get()),
-                        node_limit=int(self.node_limit.get()),
-                        pmtc_max_tracks_by_n_samples=pmtc_max_tracks,
-                        pmtc_frac_limit_by_n_samples=pmtc_frac,
-                        pmtc_min_cluster_size=int(self.pmtc_min_cluster_size.get()),
-                        setpacking_high_mask_bonus=self._setpacking_high_mask_bonus(),
-                        guarded_quality_max_cluster_rise=self._guarded_quality_max_cluster_rise(),
-                        correction_options=correction_options,
-                        output_dir=run_dir,
+                        self.sample_files, **carbon_options,
                     )
                 else:
-                    clusters = run_c_v5_clustering(
+                    run_carbon = (
+                        run_c_common_mask_backend_clustering
+                        if frontend_key == "common_mask" else run_c_v5_clustering
+                    )
+                    clusters = run_carbon(
                         self.sample_files,
-                        model=model_key,
-                        region_windows=region_windows,
-                        span_tol=float(self.c_span_tol.get()),
-                        residual_gate=float(self.residual_gate.get()),
-                        top_k_per_seed=int(self.top_k_per_seed.get()),
-                        max_per_sample=int(self.max_per_sample.get()),
-                        exact_limit=int(self.exact_limit.get()),
-                        beam_width=int(self.beam_width.get()),
-                        node_limit=int(self.node_limit.get()),
+                        model="v5_frontend_mask" if mask_only else model_key,
                         pmtc_max_tracks_by_n_samples=pmtc_max_tracks,
                         pmtc_frac_limit_by_n_samples=pmtc_frac,
                         pmtc_min_cluster_size=int(self.pmtc_min_cluster_size.get()),
-                        setpacking_high_mask_bonus=self._setpacking_high_mask_bonus(),
                         guarded_quality_max_cluster_rise=self._guarded_quality_max_cluster_rise(),
-                        correction_options=correction_options,
-                        output_dir=run_dir,
+                        **carbon_options,
                     )
                 result_kind = "C"
             elif kind == "C_SINGLE":
@@ -2433,14 +2406,7 @@ class ClusterModeFrame(ttk.Frame):
                 'self_weight': 0.7,
                 'env_weight': 0.3,
             }
-            pipeline = CarbonOnlyScorerGUI(**config)
-            try:
-                results = pipeline.execute()
-            finally:
-                _close_carbon_thread_connection()
-            visualizer = CarbonResultVisualizer(db_path="chem_data.db", top_results=results)
-            visualizer.generate_plots(output_dir="molecule_plots")
-            ResultViewer("chem_data.db", results).create_result_window(self.master)
+            _open_dereplication_results(self.master, CarbonOnlyScorerGUI, config)
         except Exception as e:
             messagebox.showerror("C analysis error", str(e))
 
@@ -2461,12 +2427,7 @@ class ClusterModeFrame(ttk.Frame):
                 'ch_data': {'All_type': points},
                 'tolerances': (c_tol, h_tol),
             }
-            pipeline = CHOnlyScorerGUI(**config)
-            results = pipeline.execute()
-            visualizer = CHMatchVisualizer(db_path="chem_data.db", top_results=results, mode=1)
-            viewer = CHResultViewer(db_path="chem_data.db", results=results)
-            viewer.create_result_window(self.master)
-            visualizer.generate_plots()
+            _open_dereplication_results(self.master, CHOnlyScorerGUI, config)
         except Exception as e:
             messagebox.showerror("HSQC analysis error", str(e))
 

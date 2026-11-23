@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 
 COLUMN_ALIASES = {
-    "sample": ("sample", "sample_id", "spec", "spectrum"),
+    "sample": ("sample", "sample_id", "spectrum_id", "spec", "spectrum"),
     "ppm": ("ppm", "shift", "delta", "chemical_shift", "peak_ppm", "x", "ppm1", "cppm", "c_ppm", "c ppm", "carbon_ppm", "13c_ppm"),
     "height": ("height", "intensity", "amp", "amplitude", "peak_height", "y"),
     "width": ("width", "width_ppm", "fwhm", "peak_width"),

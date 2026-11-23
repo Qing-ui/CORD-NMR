@@ -47,6 +47,8 @@ from single_spectrum.pipeline import (
 DEFAULT_REGION_WINDOWS: List[Tuple[float, float, float]] = [
     (0.0, 220.0, 0.80),
 ]
+DEFAULT_C_TOP_K = 20
+DEFAULT_C_MIN_OUTPUT_TRACKS = 5
 
 
 MODEL_DISPLAY_NAMES: Dict[str, str] = {
@@ -327,9 +329,9 @@ def _build_v5_config(
     *,
     model: str = "v5_pmtc",
     region_windows: Optional[List[Tuple[float, float, float]]] = None,
-    span_tol: float = 1.00,
-    residual_gate: float = 0.15,
-    top_k_per_seed: int = 5,
+    span_tol: float = 1.20,
+    residual_gate: float = 1.00,
+    top_k_per_seed: int = DEFAULT_C_TOP_K,
     max_per_sample: int = 3,
     exact_limit: int = 12,
     beam_width: int = 120,
@@ -365,27 +367,6 @@ def _build_v5_config(
     return config
 
 
-def _run_switchable_model_global_strict(samples, config):
-    """Run the switchable 13C pipeline with the strict global set-packing front end."""
-    from nmr_trendtrack.models import run_switchable_model
-    from nmr_trendtrack.models.three_model_pipeline import _v4_modules
-
-    _base, gsp = _v4_modules()
-    missing = object()
-    original_pack = getattr(gsp, "mask_stratified_global_set_packing", missing)
-    try:
-        gsp.mask_stratified_global_set_packing = gsp.componentwise_global_set_packing
-        return run_switchable_model(samples, config)
-    finally:
-        if original_pack is missing:
-            try:
-                delattr(gsp, "mask_stratified_global_set_packing")
-            except AttributeError:
-                pass
-        else:
-            gsp.mask_stratified_global_set_packing = original_pack
-
-
 def run_c_v5_clustering(
     sample_files: Sequence[str],
     model: str = "v5_pmtc",
@@ -393,7 +374,7 @@ def run_c_v5_clustering(
     region_windows: Optional[List[Tuple[float, float, float]]] = None,
     span_tol: float = 1.20,
     residual_gate: float = 1.00,
-    top_k_per_seed: int = 6,
+    top_k_per_seed: int = DEFAULT_C_TOP_K,
     max_per_sample: int = 3,
     exact_limit: int = 12,
     beam_width: int = 120,
@@ -404,6 +385,7 @@ def run_c_v5_clustering(
     setpacking_model_cost: float = 1.10,
     setpacking_high_mask_bonus: float = 0.10,
     guarded_quality_max_cluster_rise: int = 1,
+    min_output_tracks: int = DEFAULT_C_MIN_OUTPUT_TRACKS,
     correction_options: Optional[dict] = None,
     output_dir: Optional[str | Path] = None,
 ) -> List[ClusterBlock]:
@@ -414,6 +396,7 @@ def run_c_v5_clustering(
         raise ValueError("C span tolerance and residual gate must be positive.")
 
     from nmr_trendtrack.contracts import Sample
+    from nmr_trendtrack.models import run_switchable_model
 
     with tempfile.TemporaryDirectory(prefix="recqc30_ccluster_") as tmp:
         tmpdir = Path(tmp)
@@ -474,7 +457,7 @@ def run_c_v5_clustering(
             setpacking_high_mask_bonus=setpacking_high_mask_bonus,
             guarded_quality_max_cluster_rise=guarded_quality_max_cluster_rise,
         )
-        state = _run_switchable_model_global_strict(samples, config)
+        state = run_switchable_model(samples, config)
 
     membership = {m.track_id: (m.final_cluster_id or m.component_cluster_id or m.best_cluster_id or "C_unassigned") for m in state.memberships}
     groups: Dict[str, List] = defaultdict(list)
@@ -487,6 +470,8 @@ def run_c_v5_clustering(
     region_txt = "; ".join(f"{lo:g}-{hi:g}:{win:g}" for lo, hi, win in (region_windows or DEFAULT_REGION_WINDOWS))
     for cid in sorted(groups, key=lambda x: (str(x).lower().endswith("unassigned"), str(x))):
         tracks = groups[cid]
+        if len(tracks) < min_output_tracks:
+            continue
         vals = [float(t.center_ppm) for t in tracks]
         mask_counts: Dict[str, int] = defaultdict(int)
         for t in tracks:
@@ -494,7 +479,9 @@ def run_c_v5_clustering(
             mask_counts[mask] += 1
         mask = max(mask_counts.items(), key=lambda kv: kv[1])[0] if mask_counts else ""
         normalized_model = normalize_model_key(model)
-        if normalized_model in {"v5_enum_mask", "v5_enumerated_mask", "enumerated_v5_mask"}:
+        if normalized_model in {"v5_frontend_mask", "v5_pmtc_mask", "v5_mask"}:
+            backend_note = "Mask-only"
+        elif normalized_model in {"v5_enum_mask", "v5_enumerated_mask", "enumerated_v5_mask"}:
             backend_note = model_display_label("v5_enum_mask")
         elif normalized_model in {"v5_enum", "v5_enumerated", "enumerated_v5"}:
             backend_note = model_display_label("v5_enum")
@@ -508,7 +495,7 @@ def run_c_v5_clustering(
         details = (
             f"{backend_note} frontend=global_strict; tracks={len(tracks)}; dominant_mask={mask}; "
             f"sample_order={sample_order_txt}; mask_counts={mask_counts_txt}; "
-            f"region_tol=[{region_txt}]; span<={span_tol:g}; residual_gate={residual_gate:g}"
+            f"region_tol=[{region_txt}]; span<={span_tol:g}; residual_gate={residual_gate:g}; top_k={top_k_per_seed}"
         )
         details = f"{details}; {correction_note}"
         blocks.append(ClusterBlock(cluster_id=str(cid), kind="C", values=vals, n_tracks=len(tracks), presence_mask=mask, details=details))
@@ -1216,6 +1203,40 @@ def _project_track_to_common_mask(track: dict, common_mask: str, ordered_ids: Se
     return projected
 
 
+def _project_contiguous_common_tracks(tracks: List[dict], ordered_ids: List[str], config) -> List[dict]:
+    """Project onto contiguous submasks in descending size and mask order."""
+    from nmr_trendtrack.models.three_model_pipeline import _setpacking_track_weight, _v4_modules
+
+    _, setpacking = _v4_modules()
+    weight = _setpacking_track_weight(config.model.setpacking_model_cost, config.model.setpacking_high_mask_bonus)
+    n_samples = len(ordered_ids)
+    masks = [(track, _dict_track_mask(track, ordered_ids)) for track in tracks]
+    out = []
+    for size in range(n_samples, 0, -1):
+        for start in range(n_samples - size + 1):
+            common_mask = "0" * start + "1" * size + "0" * (n_samples - start - size)
+            pool = []
+            for track, source_mask in masks:
+                if size == 1:
+                    if source_mask != common_mask:
+                        continue
+                elif "0" in source_mask[start : start + size]:
+                    continue
+                projected = _project_track_to_common_mask(track, common_mask, ordered_ids)
+                if projected is not None:
+                    pool.append(projected)
+            if pool:
+                selected, _ = setpacking.componentwise_global_set_packing(
+                    pool,
+                    exact_limit=config.model.exact_limit,
+                    beam_width=config.model.beam_width,
+                    node_limit=config.model.node_limit,
+                    weight_fn=weight,
+                )
+                out.extend(selected)
+    return out
+
+
 def _common_mask_track_center(track: dict, common_mask: str, ordered_ids: Sequence[str]) -> float:
     vals = []
     members = track.get("members", {}) or {}
@@ -1247,38 +1268,30 @@ def run_c_presence_mask_clustering(
     *,
     model: str = "v5_pmtc",
     region_windows: Optional[List[Tuple[float, float, float]]] = None,
-    span_tol: float = 1.00,
+    span_tol: float = 1.20,
     residual_gate: float = 1.00,
-    top_k_per_seed: int = 6,
+    top_k_per_seed: int = DEFAULT_C_TOP_K,
     max_per_sample: int = 3,
     exact_limit: int = 12,
     beam_width: int = 120,
     node_limit: int = 100000,
     setpacking_model_cost: float = 1.10,
     setpacking_high_mask_bonus: float = 0.0,
+    min_output_tracks: int = DEFAULT_C_MIN_OUTPUT_TRACKS,
     correction_options: Optional[dict] = None,
     output_dir: Optional[str | Path] = None,
 ) -> List[ClusterBlock]:
-    """SP-Mask ablation: group generated cross-sample 13C tracks by common mask.
-
-    Track generation is intentionally shared with the SPTC/PMTC front end.  This mode
-    changes only the final partitioning step: two-or-more-sample masks are interpreted
-    inclusively.  For example, mask 00011 means "shared by S4/S5", so tracks from
-    00011, 10011, ..., 11111 can contribute after a second set-packing pass inside
-    that common-mask pool.  Singleton masks keep strict "sample-specific residual"
-    semantics to avoid over-broad single-sample groups.
-    """
+    """Group shared SPTC tracks by contiguous common masks without PMTC."""
     if len(sample_files) < 2:
         raise ValueError("Presence-mask C clustering needs at least two sample peak-list files.")
-    if span_tol <= 0:
-        raise ValueError("C span tolerance must be positive.")
+    if span_tol <= 0 or residual_gate <= 0:
+        raise ValueError("C span tolerance and residual gate must be positive.")
 
     from nmr_trendtrack.contracts import Sample
     from nmr_trendtrack.models.three_model_pipeline import (
         _apply_mask_residual_filter,
         _apply_sample_specific_residual_peak_filter,
         _run_v4_frontend,
-        _v4_modules,
     )
 
     with tempfile.TemporaryDirectory(prefix="recqc30_presence_c_") as tmp:
@@ -1380,56 +1393,8 @@ def run_c_presence_mask_clustering(
             diag = {"n_candidate_tracks": "", "n_selected_tracks": len(tracks), "source_model": normalized_model}
             backend_note = model_display_label(normalized_model)
 
-        def _track_center(track: dict) -> float:
-            vals = []
-            for peak in track.get("members", {}).values():
-                ppm = _safe_float(peak.get("ppm_corr")) if isinstance(peak, dict) else None
-                if ppm is None and isinstance(peak, dict):
-                    ppm = _safe_float(peak.get("ppm"))
-                if ppm is not None:
-                    vals.append(ppm)
-            return float(median(vals)) if vals else 0.0
-
-        _base_mod, setpacking_mod = _v4_modules()
-        groups: Dict[str, List[dict]] = {}
-        pool_sizes: Dict[str, int] = {}
-        source_mask_counts: Dict[str, Dict[str, int]] = {}
-
-        for common_mask in _all_nonempty_masks(len(ordered_ids)):
-            pool: List[dict] = []
-            for track in tracks:
-                strict_mask = _dict_track_mask(track, ordered_ids)
-                if _mask_popcount(common_mask) >= 2:
-                    if not _mask_contains(strict_mask, common_mask):
-                        continue
-                elif strict_mask != common_mask:
-                    continue
-                projected = _project_track_to_common_mask(track, common_mask, ordered_ids)
-                if projected is not None:
-                    pool.append(projected)
-            if not pool:
-                continue
-            selected, _pack_info = setpacking_mod.componentwise_global_set_packing(
-                pool,
-                exact_limit=exact_limit,
-                beam_width=beam_width,
-                node_limit=node_limit,
-            )
-            if not selected:
-                continue
-            groups[common_mask] = selected
-            pool_sizes[common_mask] = len(pool)
-            counts: Dict[str, int] = defaultdict(int)
-            for track in selected:
-                counts[str(track.get("source_strict_mask", _dict_track_mask(track, ordered_ids)))] += 1
-            source_mask_counts[common_mask] = dict(counts)
-
-        mask_only_tracks: List[dict] = []
-        mask_only_labels: List[str] = []
-        for mask in sorted(groups, key=lambda m: (_mask_popcount(m), m), reverse=True):
-            for track in groups[mask]:
-                mask_only_tracks.append(track)
-                mask_only_labels.append(f"M{mask}")
+        mask_only_tracks = _project_contiguous_common_tracks(tracks, ordered_ids, config)
+        mask_only_labels = [f"M{track['common_mask']}" for track in mask_only_tracks]
 
         mask_only_tracks, mask_only_labels, residual_diag = _apply_mask_residual_filter(
             mask_only_tracks,
@@ -1463,6 +1428,8 @@ def run_c_presence_mask_clustering(
             ),
         ):
             group = cleaned_groups[cid]
+            if len(group) < min_output_tracks:
+                continue
             mask_counts: Dict[str, int] = defaultdict(int)
             source_counts: Dict[str, int] = defaultdict(int)
             vals = []
@@ -1508,9 +1475,9 @@ def run_c_common_mask_backend_clustering(
     *,
     model: str = "v5_enum",
     region_windows: Optional[List[Tuple[float, float, float]]] = None,
-    span_tol: float = 1.00,
+    span_tol: float = 1.20,
     residual_gate: float = 1.00,
-    top_k_per_seed: int = 6,
+    top_k_per_seed: int = DEFAULT_C_TOP_K,
     max_per_sample: int = 3,
     exact_limit: int = 12,
     beam_width: int = 120,
@@ -1521,17 +1488,11 @@ def run_c_common_mask_backend_clustering(
     setpacking_model_cost: float = 1.10,
     setpacking_high_mask_bonus: float = 0.0,
     guarded_quality_max_cluster_rise: int = 4,
+    min_output_tracks: int = DEFAULT_C_MIN_OUTPUT_TRACKS,
     correction_options: Optional[dict] = None,
     output_dir: Optional[str | Path] = None,
 ) -> List[ClusterBlock]:
-    """Run common-mask projected tracks through PMTC or QG-PMTC.
-
-    The front end first builds inclusive common-mask pools. For mask 00011, tracks
-    from 00011, 10011, ..., 11111 are projected onto S4/S5 and repacked inside
-    that common-mask pool. The resulting tracks are then clustered by PMTC or
-    QG-PMTC and passed through the same residual-mask/sample-specific cleanup as
-    the strict PMTC backends.
-    """
+    """Run contiguous common-mask views through PMTC or QG-PMTC and cleanup."""
     if len(sample_files) < 2:
         raise ValueError("Common-mask backend clustering needs at least two sample peak-list files.")
     if span_tol <= 0 or residual_gate <= 0:
@@ -1547,7 +1508,6 @@ def run_c_common_mask_backend_clustering(
         _apply_sample_specific_residual_peak_filter,
         _pmtc_labels,
         _run_v4_frontend,
-        _v4_modules,
         guarded_recall_quality_labels,
     )
 
@@ -1612,43 +1572,8 @@ def run_c_common_mask_backend_clustering(
             guarded_quality_max_cluster_rise=guarded_quality_max_cluster_rise,
         )
         ordered_ids, _peaks_original, _shifts, strict_tracks, diag = _run_v4_frontend(samples, config)
-        _base_mod, setpacking_mod = _v4_modules()
-
-        common_tracks: List[dict] = []
-        pool_sizes: Dict[str, int] = {}
-        selected_sizes: Dict[str, int] = {}
-        source_mask_counts: Dict[str, Dict[str, int]] = {}
-        for common_mask in _all_nonempty_masks(len(ordered_ids)):
-            pool: List[dict] = []
-            for track in strict_tracks:
-                strict_mask = _dict_track_mask(track, ordered_ids)
-                if _mask_popcount(common_mask) >= 2:
-                    if not _mask_contains(strict_mask, common_mask):
-                        continue
-                elif strict_mask != common_mask:
-                    continue
-                projected = _project_track_to_common_mask(track, common_mask, ordered_ids)
-                if projected is not None:
-                    pool.append(projected)
-            if not pool:
-                continue
-            selected, _pack_info = setpacking_mod.componentwise_global_set_packing(
-                pool,
-                exact_limit=exact_limit,
-                beam_width=beam_width,
-                node_limit=node_limit,
-            )
-            if not selected:
-                continue
-            for track in selected:
-                track["common_mask"] = common_mask
-            common_tracks.extend(selected)
-            pool_sizes[common_mask] = len(pool)
-            selected_sizes[common_mask] = len(selected)
-            counts: Dict[str, int] = defaultdict(int)
-            for track in selected:
-                counts[str(track.get("source_strict_mask", _dict_track_mask(track, ordered_ids)))] += 1
-            source_mask_counts[common_mask] = dict(counts)
+        common_tracks = _project_contiguous_common_tracks(strict_tracks, ordered_ids, config)
+        n_common_tracks = len(common_tracks)
 
         normalized_model = normalize_model_key(model or "v5_enum")
         pmtc_labels, pmtc_diag = _pmtc_labels(common_tracks, ordered_ids, config)
@@ -1686,7 +1611,7 @@ def run_c_common_mask_backend_clustering(
     sample_order_txt = ",".join(ordered_ids)
     region_txt = "; ".join(f"{lo:g}-{hi:g}:{win:g}" for lo, hi, win in (region_windows or DEFAULT_REGION_WINDOWS))
     diag_txt = (
-        f"common_frontend_tracks={sum(selected_sizes.values())}; "
+        f"common_frontend_tracks={n_common_tracks}; "
         f"candidate_tracks={diag.get('n_candidate_tracks', '')}; "
         f"strict_selected={diag.get('n_selected_tracks', '')}; "
         f"mask_cleanup={residual_diag.get('mask_residual_output_tracks', '')}; "
@@ -1694,6 +1619,8 @@ def run_c_common_mask_backend_clustering(
     )
     for cid in sorted(groups, key=lambda x: (str(x).lower().endswith("unassigned"), str(x))):
         tracks = groups[cid]
+        if len(tracks) < min_output_tracks:
+            continue
         vals = []
         mask_counts: Dict[str, int] = defaultdict(int)
         source_counts: Dict[str, int] = defaultdict(int)

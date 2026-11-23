@@ -179,10 +179,23 @@ def apply_intensity_correction_model(
     d90_path=None,
     config: SingleSpectrumCalibrationConfig | None = None,
 ) -> dict:
-    cfg = config or SingleSpectrumCalibrationConfig()
-    model = load_model(model_path)
+    return _apply_intensity_correction(
+        load_model(model_path),
+        config or SingleSpectrumCalibrationConfig(),
+        input_path=input_path,
+        model_path=model_path,
+        out_dir=out_dir,
+        allc_path=allc_path,
+        d135_path=d135_path,
+        d90_path=d90_path,
+    )
+
+
+def _apply_intensity_correction(
+    model, cfg, *, input_path, model_path, out_dir, allc_path, d135_path, d90_path,
+) -> dict:
     required_type = bool(model.get("used_type", False))
-    mode, apply_df, mapping, source_stem = _load_training_dataframe(
+    mode, apply_df, mapping, _ = _load_training_dataframe(
         cfg,
         input_path=input_path,
         allc_path=allc_path,
@@ -200,7 +213,7 @@ def apply_intensity_correction_model(
         "mode": mode,
         "n_rows": int(len(corrected)),
         "n_samples": int(corrected["sample"].nunique()),
-        "model_path": str(model_path),
+        "model_path": str(model_path) if model_path is not None else None,
         "used_type_column": bool("type" in apply_df.columns and apply_df["type"].notna().any()),
     }
     if out_dir is not None:
@@ -234,15 +247,15 @@ def run_calibration_pipeline(
         config=config,
         out_dir=out,
     )
-    model_path = (out / "model.json") if out is not None else Path("model.json")
-    apply_result = apply_intensity_correction_model(
+    apply_result = _apply_intensity_correction(
+        train_result["model"],
+        config,
         input_path=input_path,
         allc_path=allc_path,
         d135_path=d135_path,
         d90_path=d90_path,
-        model_path=model_path,
+        model_path=out / "model.json" if out is not None else None,
         out_dir=out,
-        config=config,
     )
     return {
         **apply_result,

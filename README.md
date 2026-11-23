@@ -4,16 +4,13 @@ CORD-NMR is a Windows desktop application for natural-product NMR workflows.
 The GUI combines carbon and HSQC dereplication, continuous-series and
 single-spectrum clustering, NMR prediction, and atom-level assignment.
 
-Current public release: **CORD-NMR 1.0.1**.
+Current public release: **CORD-NMR 1.0.2**.
 
 The continuous-series implementation in this repository is synchronized with
-the final CORD-NMR resubmission. The adopted benchmark implementation uses the
-strict-contiguous SPTC front end (`gap = 0`), retains up to 20 candidates per
-seed in the benchmark evaluator, and evaluates the global-strict and
-common-mask routes with mask-only, PMTC, and QG-PMTC outputs. The PMTC
-sample-number settings used for the benchmark remain the recorded settings;
-the exploratory uniform-cap, deletion-only, BIC, and permutation variants are
-not part of this repository.
+the final CORD-NMR method. The continuous ¹³C workflow uses the
+strict-contiguous SPTC front end (`gap = 0`) with up to 20 candidates per
+starting peak. Both global strict and common-mask support mask-only, PMTC,
+and QG-PMTC. The samples must be supplied in fraction order.
 
 This repository contains the software needed to inspect and reproduce the GUI
 logic. It deliberately does not contain the manuscript, supporting information,
@@ -21,7 +18,7 @@ research datasets, exploratory work, generated results, or user databases.
 
 ## Included workflows
 
-- Carbon-only, HSQC-only, and combined scoring.
+- Carbon-only, HSQC-only, and combined library scoring with ReCQC 2.0 Speed.
 - Continuous-series and single-spectrum clustering.
 - NMRNet and CASCADE-2.0 prediction bridges.
 - Predicted-to-experimental NMR assignment workspace.
@@ -94,6 +91,10 @@ Prioritization. *Analytical Chemistry*. https://doi.org/10.1021/acs.analchem.6c0
 
 ## License
 
-Copyright is reserved. Public visibility does not grant permission to copy,
-modify, redistribute, sublicense, or use the software commercially. See
-[`LICENSE`](LICENSE).
+The CORD-NMR application is distributed under [`LICENSE`](LICENSE).
+The integrated ReCQC 2.0 Speed scoring modules retain their
+[research and education license](docs/LICENSE-ReCQC-2.0-Speed.txt).
+CORD-NMR adapts those modules to its scoring tabs and the direct search
+actions in clustering results. The SDF reader preserves explicit atom
+indices used by the prediction tags. The upstream source is
+[ReCQC commit `80d873b`](https://github.com/Qing-ui/ReCQC/commit/80d873bdf7944f576c76f0f1b031f82bc0d09558).

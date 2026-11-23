@@ -1,0 +1,49 @@
+ReCQC Research and Education License / ReCQC 科研与教育许可协议
+
+Copyright (c) 2026 ReCQC authors. All rights reserved.
+
+Permission is granted, free of charge, to use, copy, modify, and redistribute
+this software in source or binary form solely for non-commercial scientific
+research and educational purposes, subject to the following conditions:
+
+1. This copyright notice and license notice must be retained in all copies and
+   substantial portions of the software.
+2. Modified versions must be clearly identified as modified and must describe
+   the changes made.
+3. The names of the authors and contributors may not be used to endorse or
+   promote derived products without prior written permission.
+4. Commercial use requires prior written authorization from the copyright
+   holders. Commercial use includes, without limitation, sale, paid services,
+   commercial products, commercial consulting, and internal commercial
+   research or development.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+For commercial licensing, contact 2638614209@qq.com.
+
+中文译文
+
+版权所有 (c) 2026 ReCQC 作者。保留所有权利。
+
+在遵守下列条件的前提下，特此免费允许任何人仅为非商业科学研究和
+教育目的，以源代码或二进制形式使用、复制、修改和再分发本软件：
+
+1. 本版权声明和许可声明必须保留在本软件的所有副本及主要部分中。
+2. 修改后的版本必须明确标注为修改版本，并说明所作的更改。
+3. 未经事先书面许可，不得使用作者或贡献者的姓名为衍生产品背书或宣传。
+4. 商业使用须事先获得版权所有者的书面授权。商业使用包括但不限于销售、
+   收费服务、商业产品、商业咨询以及企业内部的商业研究或开发。
+
+本软件按“原样”提供，不作任何明示或默示担保，包括但不限于对适销性、
+特定用途适用性和不侵权的担保。在任何情况下，作者或版权所有者均不对因
+本软件或本软件的使用及其他交易而产生、引起或与之相关的任何索赔、损害
+或其他责任承担责任，无论该责任源于合同、侵权或其他原因。
+
+商业许可请联系：2638614209@qq.com。
+
+本中文译文用于帮助理解；如中英文版本存在不一致，以英文版本为准。

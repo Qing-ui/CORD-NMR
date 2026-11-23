@@ -11,6 +11,11 @@ venv/
 # Bundled predictor runtimes and weights belong in release artifacts only
 external/NMR-Predictor-Portable/envs/
 external/NMR-Predictor-Portable/models/
+external/NMR-Predictor-Portable/cache/
+external/NMR-Predictor-Portable/licenses/
+external/NMR-Predictor-Portable/app/unicore/
+external/NMR-Predictor-Portable/runtime-paths.json
+external/NMR-Predictor-Portable/install-state.json
 
 # User inputs, generated databases, and analysis output
 chem_data.db*
@@ -26,6 +31,7 @@ combined_results/
 molecule_plots/
 paper_figures/
 experiments/
+tests/
 tmp/
 
 # Archives and manuscript material are never tracked
